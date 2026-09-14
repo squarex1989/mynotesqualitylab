@@ -64,6 +64,7 @@ async function run(roomId, job) {
           const target = missing[cursor++];
           try {
             await ensureAudio({
+              model: target.model,
               voice: target.voice,
               instructions: target.instructions,
               speed: target.speed,

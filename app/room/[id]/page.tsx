@@ -65,7 +65,7 @@ export default function RoomPage() {
       setCopied(true);
       setTimeout(() => setCopied(false), 1600);
     } catch {
-      /* 没有剪贴板权限就算了 */
+      /* no clipboard permission — never mind */
     }
   };
 
@@ -73,9 +73,9 @@ export default function RoomPage() {
     return (
       <div className="shell" style={{ maxWidth: 520, paddingTop: 80 }}>
         <div className="card">
-          <h2>进不去这个房间</h2>
+          <h2>Can&apos;t open this room</h2>
           <p className="sub">{fatal}</p>
-          <Link href="/">← 回首页</Link>
+          <Link href="/">← Home</Link>
         </div>
       </div>
     );
@@ -85,27 +85,27 @@ export default function RoomPage() {
     <div className="shell">
       <div className="topbar">
         <div>
-          <div className="tiny muted">房间号</div>
+          <div className="tiny muted">Room code</div>
           <button
             className="ghost"
             onClick={copy}
             style={{ border: 'none', padding: 0, background: 'none' }}
-            title="点一下复制"
+            title="Click to copy"
           >
             <span className="roomcode">{roomId}</span>
           </button>
-          {copied && <span className="tiny muted" style={{ marginLeft: 8 }}>已复制</span>}
+          {copied && <span className="tiny muted" style={{ marginLeft: 8 }}>copied</span>}
         </div>
 
         <div className="row" style={{ marginLeft: 'auto' }}>
           <span className={`pill ${connected ? 'ok' : 'err'}`}>
             <span className={`dot ${connected ? 'ok' : 'err'}`} />
-            {connected ? '已连接' : '连接中…'}
+            {connected ? 'connected' : 'connecting…'}
           </span>
-          {isHost && <span className="pill on">房主</span>}
-          {state?.status === 'playing' && <span className="pill on">▶ 朗读中</span>}
+          {isHost && <span className="pill on">host</span>}
+          {state?.status === 'playing' && <span className="pill on">▶ reading</span>}
           <Link href="/" className="pill">
-            首页
+            Home
           </Link>
         </div>
       </div>
@@ -113,27 +113,28 @@ export default function RoomPage() {
       {!audioUnlocked && (
         <div className="unlock">
           <span>
-            浏览器默认不给网页出声。点一下这个按钮，这台设备才能朗读
+            This device can&apos;t play audio yet — browsers need one interaction first. Click
+            anywhere on the page, or use this button
             {ambienceStatus.isAmbienceDevice || state?.settings.ambienceDevice === deviceId
-              ? '（顺便把环境音也点亮）'
+              ? ' (it also arms the ambience player)'
               : ''}
-            。
+            .
           </span>
-          <button onClick={unlockAudio}>启用声音</button>
+          <button onClick={unlockAudio}>Enable audio</button>
         </div>
       )}
 
       {ambienceStatus.error && (
         <div className="card" style={{ borderColor: 'rgba(239,111,111,.4)' }}>
           <span className="tiny" style={{ color: 'var(--err)' }}>
-            环境音加载失败：{ambienceStatus.error}
+            Ambience failed to load: {ambienceStatus.error}
           </span>
         </div>
       )}
 
       {!state ? (
         <div className="card">
-          <p className="muted">正在加载房间…</p>
+          <p className="muted">Loading room…</p>
         </div>
       ) : !state.locked ? (
         <div className="grid">
@@ -142,9 +143,10 @@ export default function RoomPage() {
               <TranscriptUploader roomId={roomId} />
             ) : (
               <div className="card">
-                <h2>等房主上传 transcript</h2>
+                <h2>Waiting for the host to upload a transcript</h2>
                 <p className="sub">
-                  上传之后这里会出现角色列表和你分到的台词。先确认一下你这台机器的名字和声音已经启用。
+                  Once it&apos;s up, the speaker list and your lines show here. Meanwhile, check
+                  this device&apos;s name and make sure audio is enabled.
                 </p>
               </div>
             )}
@@ -163,6 +165,7 @@ export default function RoomPage() {
             <ToneSettings
               settings={state.settings}
               devices={state.devices}
+              meta={meta}
               isHost={isHost}
               onChange={actions.updateSettings}
             />
@@ -220,6 +223,7 @@ export default function RoomPage() {
             <ToneSettings
               settings={state.settings}
               devices={state.devices}
+              meta={meta}
               isHost={isHost}
               onChange={actions.updateSettings}
             />

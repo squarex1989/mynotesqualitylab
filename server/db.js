@@ -54,9 +54,11 @@ CREATE TABLE IF NOT EXISTS rooms (
   order_mode    TEXT NOT NULL DEFAULT 'ordered',  -- ordered | chaotic
   noise_mode    TEXT NOT NULL DEFAULT 'quiet',    -- quiet | noisy
   ambience_kind TEXT NOT NULL DEFAULT 'cafe',     -- cafe | airport
-  ambience_url  TEXT,
-  ambience_volume INTEGER NOT NULL DEFAULT 25,
+  ambience_url_cafe    TEXT,                 -- 每个场景各存一份链接，切换场景不会互相覆盖
+  ambience_url_airport TEXT,
+  ambience_volume INTEGER NOT NULL DEFAULT 10,
   ambience_device TEXT,
+  tts_model     TEXT,                            -- 每个房间可以自己选免费/付费模型
   gap_ms        INTEGER NOT NULL DEFAULT 450,
   chaos_period_ms INTEGER NOT NULL DEFAULT 20000,
   duck_gain     REAL NOT NULL DEFAULT 0.5,
@@ -104,6 +106,43 @@ CREATE TABLE IF NOT EXISTS devices (
 CREATE INDEX IF NOT EXISTS idx_lines_room ON lines(room_id);
 CREATE INDEX IF NOT EXISTS idx_devices_room ON devices(room_id);
 `);
+
+// CREATE TABLE IF NOT EXISTS 不会给已存在的表补列，所以新加的列要单独迁移
+function addColumnIfMissing(table, column, definition) {
+  const cols = db.prepare(`SELECT name FROM pragma_table_info(?)`).all(table).map((r) => r.name);
+  if (!cols.includes(column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    console.log(`[db] 已给 ${table} 补上 ${column} 列`);
+  }
+}
+
+addColumnIfMissing('rooms', 'tts_model', 'TEXT');
+addColumnIfMissing('rooms', 'ambience_url_cafe', 'TEXT');
+addColumnIfMissing('rooms', 'ambience_url_airport', 'TEXT');
+
+// 场景默认音源。放在这一层是为了让下面的回填和 createRoom 用同一份值。
+export const AMBIENCE_DEFAULTS = {
+  cafe: 'https://www.youtube.com/watch?v=jfzqpz3h0zU',
+  airport: 'https://www.youtube.com/watch?v=LXzFZQC97nc',
+};
+
+// 给还没有链接的房间补上默认值。
+// ambience_url 是上一版的单一字段，只有升级上来的库才有这一列 —— 新库里没有，
+// 所以要先探一下再决定 SQL，否则会报 no such column。
+{
+  const roomCols = db.prepare(`SELECT name FROM pragma_table_info('rooms')`).all().map((r) => r.name);
+  const legacy = roomCols.includes('ambience_url');
+
+  db.prepare(
+    legacy
+      ? `UPDATE rooms SET ambience_url_cafe = COALESCE(ambience_url, ?) WHERE ambience_url_cafe IS NULL`
+      : `UPDATE rooms SET ambience_url_cafe = ? WHERE ambience_url_cafe IS NULL`
+  ).run(AMBIENCE_DEFAULTS.cafe);
+
+  db.prepare(`UPDATE rooms SET ambience_url_airport = ? WHERE ambience_url_airport IS NULL`).run(
+    AMBIENCE_DEFAULTS.airport
+  );
+}
 
 // Fish 原生支持 mp3 输出，直接存 mp3 —— 比 WAV 小九倍左右
 export function audioPath(hash) {

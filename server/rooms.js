@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { db } from './db.js';
+import { db, AMBIENCE_DEFAULTS } from './db.js';
 import {
   randomSpeakerConfig,
   normalizeConfig,
@@ -8,7 +8,7 @@ import {
   labelFor,
   speedFor,
 } from './voices.js';
-import { audioHash, lookupAudio } from './tts.js';
+import { audioHash, lookupAudio, normalizeModel, DEFAULT_TTS_MODEL } from './tts.js';
 
 // 去掉 0/O/1/I 这些看错就加不进房间的字符
 const ID_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -22,15 +22,23 @@ function makeRoomId() {
     const exists = db.prepare('SELECT 1 FROM rooms WHERE id = ?').get(id);
     if (!exists) return id;
   }
-  throw new Error('生成房间号失败，请重试');
+  throw new Error('Could not allocate a room code, please retry');
 }
 
 export function createRoom({ title } = {}) {
   const id = makeRoomId();
   const hostToken = crypto.randomBytes(24).toString('hex');
   db.prepare(
-    'INSERT INTO rooms (id, host_token, created_at, title) VALUES (?, ?, ?, ?)'
-  ).run(id, hostToken, Date.now(), title || null);
+    `INSERT INTO rooms (id, host_token, created_at, title, ambience_url_cafe, ambience_url_airport)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(
+    id,
+    hostToken,
+    Date.now(),
+    title || null,
+    AMBIENCE_DEFAULTS.cafe,
+    AMBIENCE_DEFAULTS.airport
+  );
   return { id, hostToken };
 }
 
@@ -64,9 +72,9 @@ export function getDevices(roomId) {
 /** 上传 transcript。房间一旦 locked 就不再接受新的 transcript。 */
 export function setTranscript(roomId, parsed) {
   const room = getRoom(roomId);
-  if (!room) throw new Error('房间不存在');
-  if (room.locked) throw new Error('这个房间已经有 transcript 了，不能替换');
-  if (!parsed.lines.length) throw new Error('没有解析出台词');
+  if (!room) throw new Error('Room not found');
+  if (room.locked) throw new Error('This room already has a transcript and it cannot be replaced');
+  if (!parsed.lines.length) throw new Error('No lines were parsed');
 
   const insertLine = db.prepare(
     'INSERT INTO lines (room_id, idx, speaker, content) VALUES (?, ?, ?, ?)'
@@ -109,7 +117,7 @@ export function setTranscript(roomId, parsed) {
  */
 export function updateSpeaker(roomId, name, patch) {
   const row = db.prepare('SELECT * FROM speakers WHERE room_id = ? AND name = ?').get(roomId, name);
-  if (!row) throw new Error('角色不存在');
+  if (!row) throw new Error('No such speaker');
 
   const before = { voice: row.voice, instructions: row.instructions };
 
@@ -175,7 +183,7 @@ export function upsertDevice(roomId, { id, name, isHost }) {
   } else {
     db.prepare(
       'INSERT INTO devices (id, room_id, name, is_host, online, last_seen) VALUES (?, ?, ?, ?, 1, ?)'
-    ).run(id, roomId, name || '未命名设备', isHost ? 1 : 0, Date.now());
+    ).run(id, roomId, name || 'Unnamed device', isHost ? 1 : 0, Date.now());
   }
   if (isHost) {
     db.prepare('UPDATE rooms SET host_device = ? WHERE id = ?').run(id, roomId);
@@ -244,12 +252,17 @@ const SETTING_COLUMNS = {
   orderMode: { col: 'order_mode', check: (v) => (['ordered', 'chaotic'].includes(v) ? v : 'ordered') },
   noiseMode: { col: 'noise_mode', check: (v) => (['quiet', 'noisy'].includes(v) ? v : 'quiet') },
   ambienceKind: { col: 'ambience_kind', check: (v) => (['cafe', 'airport'].includes(v) ? v : 'cafe') },
-  ambienceUrl: { col: 'ambience_url', check: (v) => (v ? String(v).slice(0, 500) : null) },
+  ambienceUrlCafe: { col: 'ambience_url_cafe', check: (v) => (v ? String(v).slice(0, 500) : null) },
+  ambienceUrlAirport: {
+    col: 'ambience_url_airport',
+    check: (v) => (v ? String(v).slice(0, 500) : null),
+  },
   ambienceVolume: {
     col: 'ambience_volume',
     check: (v) => Math.max(0, Math.min(100, Number(v) || 0)),
   },
   ambienceDevice: { col: 'ambience_device', check: (v) => (v ? String(v) : null) },
+  ttsModel: { col: 'tts_model', check: (v) => normalizeModel(v) },
   gapMs: { col: 'gap_ms', check: (v) => Math.max(0, Math.min(5000, Number(v) || 0)) },
   chaosPeriodMs: {
     col: 'chaos_period_ms',
@@ -282,6 +295,11 @@ export function updateRoomSettings(roomId, patch) {
   }
 }
 
+/** 当前场景用哪个链接 */
+export function ambienceUrlFor(room) {
+  return room.ambience_kind === 'airport' ? room.ambience_url_airport : room.ambience_url_cafe;
+}
+
 export function setRoomStatus(roomId, status) {
   db.prepare('UPDATE rooms SET status = ? WHERE id = ?').run(status, roomId);
 }
@@ -292,6 +310,7 @@ export function setRoomStatus(roomId, status) {
 
 /** 每句话当前应该是哪个音频文件（由 speaker 的音色配置决定） */
 export function lineTargets(roomId) {
+  const model = normalizeModel(getRoom(roomId)?.tts_model);
   const speakers = new Map(
     getSpeakers(roomId).map((s) => [
       s.name,
@@ -301,11 +320,12 @@ export function lineTargets(roomId) {
   return getLines(roomId).map((line) => {
     const sp = speakers.get(line.speaker);
     const hash = sp
-      ? audioHash({ voice: sp.voice, instructions: sp.instructions, speed: sp.speed, text: line.content })
+      ? audioHash({ model, voice: sp.voice, instructions: sp.instructions, speed: sp.speed, text: line.content })
       : null;
     return {
       ...line,
       hash,
+      model,
       voice: sp?.voice,
       instructions: sp?.instructions,
       speed: sp?.speed,
@@ -325,6 +345,7 @@ export function roomState(roomId) {
   const room = getRoom(roomId);
   if (!room) return null;
 
+  const roomModel = normalizeModel(room.tts_model);
   const firstLine = db.prepare(
     'SELECT content FROM lines WHERE room_id = ? AND speaker = ? ORDER BY idx LIMIT 1'
   );
@@ -335,7 +356,7 @@ export function roomState(roomId) {
     // 这个角色第一句话的音频（如果已经合成好），用来在界面上试听
     const first = firstLine.get(roomId, s.name);
     const sampleHash = first
-      ? audioHash({ voice: s.voice, instructions: s.instructions, speed: speedFor(config), text: first.content })
+      ? audioHash({ model: roomModel, voice: s.voice, instructions: s.instructions, speed: speedFor(config), text: first.content })
       : null;
     return {
       sampleHash: sampleHash && lookupAudio(sampleHash) ? sampleHash : null,
@@ -371,9 +392,13 @@ export function roomState(roomId) {
       orderMode: room.order_mode,
       noiseMode: room.noise_mode,
       ambienceKind: room.ambience_kind,
-      ambienceUrl: room.ambience_url,
+      ambienceUrlCafe: room.ambience_url_cafe,
+      ambienceUrlAirport: room.ambience_url_airport,
+      // 派生字段：当前选中场景对应的那个链接，播放链路只看这个
+      ambienceUrl: ambienceUrlFor(room),
       ambienceVolume: room.ambience_volume,
       ambienceDevice: room.ambience_device,
+      ttsModel: normalizeModel(room.tts_model),
       gapMs: room.gap_ms,
       chaosPeriodMs: room.chaos_period_ms,
       duckGain: room.duck_gain,

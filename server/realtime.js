@@ -17,6 +17,7 @@ import {
   setRoomStatus,
   lineTargets,
   generationProgress,
+  ambienceUrlFor,
 } from './rooms.js';
 import { ensureGeneration, jobStatus, genEvents } from './generate.js';
 import { buildSchedule } from './schedule.js';
@@ -74,7 +75,7 @@ export function attachRealtime(httpServer) {
     const room = getRoom(rawRoomId);
 
     if (!room || !deviceId) {
-      socket.emit('fatal', { message: '房间不存在或设备标识缺失' });
+      socket.emit('fatal', { message: 'Room not found, or this device sent no identifier' });
       socket.disconnect(true);
       return;
     }
@@ -115,7 +116,7 @@ export function attachRealtime(httpServer) {
     // ---------------- 以下都是房主专属 ----------------
     const hostOnly = (handler) => (payload, ack) => {
       if (!socket.data.isHost) {
-        socket.emit('toast', { kind: 'error', message: '只有房主可以做这个操作' });
+        socket.emit('toast', { kind: 'error', message: 'Only the host can do that' });
         return;
       }
       try {
@@ -138,8 +139,8 @@ export function attachRealtime(httpServer) {
             kind: 'info',
             message:
               ready === total
-                ? `「${payload.name}」这套设定之前合成过，音频直接命中缓存`
-                : `「${payload.name}」已更新，还有 ${total - ready} 句待合成`,
+                ? `${payload.name}: this exact setup was synthesized before — served from cache`
+                : `${payload.name} updated · ${total - ready} line(s) now need synthesizing`,
           });
         }
       })
@@ -191,15 +192,15 @@ export function attachRealtime(httpServer) {
       hostOnly(() => {
         const { ready, total } = generationProgress(roomId);
         if (total === 0) {
-          socket.emit('toast', { kind: 'error', message: '还没上传 transcript' });
+          socket.emit('toast', { kind: 'error', message: 'No transcript uploaded yet' });
           return;
         }
         if (ready === total) {
-          socket.emit('toast', { kind: 'success', message: '所有台词都已经有音频了，可以直接开始' });
+          socket.emit('toast', { kind: 'success', message: 'Every line already has audio — you can start' });
           return;
         }
         ensureGeneration(roomId);
-        socket.emit('toast', { kind: 'info', message: `开始合成 ${total - ready} 句` });
+        socket.emit('toast', { kind: 'info', message: `Synthesizing ${total - ready} line(s)` });
       })
     );
 
@@ -242,7 +243,7 @@ function startRoom(io, roomId, socket) {
   if (!room) return;
 
   if (!room.locked) {
-    socket.emit('toast', { kind: 'error', message: '还没上传 transcript' });
+    socket.emit('toast', { kind: 'error', message: 'No transcript uploaded yet' });
     return;
   }
 
@@ -251,12 +252,12 @@ function startRoom(io, roomId, socket) {
     const missing = progress.total - progress.ready;
     socket.emit('toast', {
       kind: 'error',
-      message: `还有 ${missing} 句没有音频，先点「合成音频」`,
+      message: `${missing} line(s) have no audio yet — hit Synthesize audio first`,
     });
     return;
   }
   if (progress.total === 0) {
-    socket.emit('toast', { kind: 'error', message: '没有可朗读的台词' });
+    socket.emit('toast', { kind: 'error', message: 'Nothing to read' });
     return;
   }
 
@@ -278,13 +279,14 @@ function startRoom(io, roomId, socket) {
   );
 
   if (!items.length) {
-    socket.emit('toast', { kind: 'error', message: '排期是空的' });
+    socket.emit('toast', { kind: 'error', message: 'The schedule came out empty' });
     return;
   }
 
   // 参与本次播放的设备 = 有台词的设备 + 环境音设备
   const pending = new Set(items.map((i) => i.deviceId).filter(Boolean));
-  const ambienceOn = room.noise_mode === 'noisy' && room.ambience_url;
+  const ambienceUrl = ambienceUrlFor(room);
+  const ambienceOn = room.noise_mode === 'noisy' && Boolean(ambienceUrl);
   if (ambienceOn && room.ambience_device) pending.add(room.ambience_device);
 
   const token = `${roomId}-${Date.now()}`;
@@ -302,7 +304,7 @@ function startRoom(io, roomId, socket) {
     ambience: ambienceOn
       ? {
           deviceId: room.ambience_device,
-          url: room.ambience_url,
+          url: ambienceUrl,
           kind: room.ambience_kind,
           volume: room.ambience_volume,
         }
@@ -316,7 +318,7 @@ function startRoom(io, roomId, socket) {
     if (!session.started) {
       io.to(roomId).emit('toast', {
         kind: 'info',
-        message: `有 ${session.pending.size} 台设备没报就绪，先开始了`,
+        message: `${session.pending.size} device(s) never reported ready — starting anyway`,
       });
       go(io, roomId);
     }

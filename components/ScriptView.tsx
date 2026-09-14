@@ -25,10 +25,10 @@ export function ScriptView({ lines, progress, schedule, activeIdxs, currentIdx, 
   return (
     <div className="card">
       <div className="spread" style={{ marginBottom: 10 }}>
-        <h2>台词（{lines.length} 句）</h2>
+        <h2>Script ({lines.length} lines)</h2>
         {progress && progress.ready < progress.total && (
           <span className="tiny muted">
-            绿点 = 已合成 {progress.ready}/{progress.total}
+            green dot = synthesized · {progress.ready}/{progress.total}
           </span>
         )}
       </div>
@@ -54,7 +54,7 @@ export function ScriptView({ lines, progress, schedule, activeIdxs, currentIdx, 
               </span>
               <span className="who">{l.speaker}</span>
               <span>
-                {overlapAt.has(l.idx) && <span className="overlap">⚡抢话 </span>}
+                {overlapAt.has(l.idx) && <span className="overlap">⚡cuts in </span>}
                 {l.content}
               </span>
             </div>

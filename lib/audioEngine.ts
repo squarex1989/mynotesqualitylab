@@ -27,20 +27,49 @@ export class AudioEngine {
     return this.ctx !== null && this.ctx.state === 'running';
   }
 
-  /** 必须在用户手势里调用，否则浏览器不给出声。 */
-  async unlock() {
+  private context() {
     if (!this.ctx) {
       const Ctor = window.AudioContext || (window as any).webkitAudioContext;
       this.ctx = new Ctor({ latencyHint: 'interactive' });
     }
-    if (this.ctx.state !== 'running') await this.ctx.resume();
-    // 播一段无声，彻底解锁 iOS/Safari
-    const buf = this.ctx.createBuffer(1, 1, this.ctx.sampleRate);
-    const src = this.ctx.createBufferSource();
-    src.buffer = buf;
-    src.connect(this.ctx.destination);
-    src.start();
-    return this.unlocked;
+    return this.ctx!;
+  }
+
+  /**
+   * 试着把 AudioContext 弄成 running。
+   *
+   * 不需要「必须是那个按钮的点击」—— 浏览器认的是任意用户手势，而且如果本站
+   * 互动度够高（Chrome 的 Media Engagement Index）或这个页面已经交互过，
+   * 连手势都不需要。所以这个方法可以随便调：能成就成，不能成就还是 suspended，
+   * 不会抛错、也不会有副作用。
+   */
+  async tryResume(): Promise<boolean> {
+    const ctx = this.context();
+    if (ctx.state !== 'running') {
+      try {
+        await ctx.resume();
+      } catch {
+        /* 没有手势时浏览器会拒绝，属于预期 */
+      }
+    }
+    if (ctx.state === 'running') {
+      // 播一段无声，彻底解锁 iOS/Safari
+      try {
+        const src = ctx.createBufferSource();
+        src.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+        src.connect(ctx.destination);
+        src.start();
+      } catch {
+        /* 无所谓 */
+      }
+      return true;
+    }
+    return false;
+  }
+
+  /** @deprecated 用 tryResume()，语义一样但名字不再暗示「必须点按钮」 */
+  async unlock() {
+    return this.tryResume();
   }
 
   private async ensureBuffer(hash: string): Promise<AudioBuffer> {
@@ -51,7 +80,7 @@ export class AudioEngine {
 
     const task = (async () => {
       const res = await fetch(audioUrl(hash));
-      if (!res.ok) throw new Error(`音频 ${hash} 取不到`);
+      if (!res.ok) throw new Error(`Could not fetch audio ${hash}`);
       const arr = await res.arrayBuffer();
       const buf = await this.ctx!.decodeAudioData(arr);
       this.buffers.set(hash, buf);

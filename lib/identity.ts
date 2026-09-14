@@ -7,13 +7,13 @@ const DEVICE_ID_KEY = 'readroom:deviceId';
 const DEVICE_NAME_KEY = 'readroom:deviceName';
 const hostKey = (roomId: string) => `readroom:host:${roomId.toUpperCase()}`;
 
-const ADJECTIVES = ['安静的', '靠窗的', '角落的', '临时的', '值班的', '走神的', '加班的', '路过的'];
-const NOUNS = ['笔记本', '台式机', '会议机', '备用机', '工位机', '沙发机'];
+const ADJECTIVES = ['Quiet', 'Window', 'Corner', 'Spare', 'Backup', 'Idle', 'Late', 'Passing'];
+const NOUNS = ['laptop', 'desktop', 'meeting box', 'spare box', 'desk machine', 'couch machine'];
 
 function randomName() {
   const a = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
   const n = NOUNS[Math.floor(Math.random() * NOUNS.length)];
-  return `${a}${n}`;
+  return `${a} ${n}`;
 }
 
 export function getDeviceId(): string {

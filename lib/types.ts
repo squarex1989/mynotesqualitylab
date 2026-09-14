@@ -1,4 +1,4 @@
-// 没有 gender —— 性别由 voice 决定，音色下拉里就标着男声/女声
+// No gender dimension — the voice itself determines it
 export type DimensionKey = 'age' | 'tone' | 'accent' | 'pace' | 'emotion' | 'quirk';
 
 export interface DimensionOption {
@@ -21,11 +21,18 @@ export interface VoiceInfo {
   languages?: string[];
 }
 
+export interface TtsModelInfo {
+  id: string;
+  label: string;
+  note: string;
+}
+
 export interface Meta {
   voices: VoiceInfo[];
   dimensions: Record<DimensionKey, Dimension>;
-  model: string;
-  /** 音色表还是内置兜底的（没跑过 fetch-fish-voices） */
+  models: TtsModelInfo[];
+  defaultModel: string;
+  /** Voice list is still the built-in fallback (fetch-fish-voices hasn't been run) */
   fallbackVoices: boolean;
   ttsConfigured: boolean;
   ttsProblem: string | null;
@@ -55,9 +62,13 @@ export interface RoomSettings {
   orderMode: 'ordered' | 'chaotic';
   noiseMode: 'quiet' | 'noisy';
   ambienceKind: 'cafe' | 'airport';
+  ambienceUrlCafe: string | null;
+  ambienceUrlAirport: string | null;
+  /** Derived: whichever URL matches the selected scene */
   ambienceUrl: string | null;
   ambienceVolume: number;
   ambienceDevice: string | null;
+  ttsModel: string;
   gapMs: number;
   chaosPeriodMs: number;
   duckGain: number;

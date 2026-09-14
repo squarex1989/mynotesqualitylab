@@ -42,24 +42,25 @@ export function SpeakerList({
   return (
     <div className="card">
       <div className="spread" style={{ marginBottom: 4 }}>
-        <h2>角色（{speakers.length}）</h2>
+        <h2>Speakers ({speakers.length})</h2>
         {isHost && (
           <button className="small ghost" onClick={onRandomizeAll}>
-            全部重新随机
+            Randomize all
           </button>
         )}
       </div>
       <p className="sub">
-        {meta && <>{meta.voices.length} 个音色可选。</>}性别由音色本身决定，不用单独设。
-        调完这里再去右侧点「合成音频」—— 改动不会自动触发 TTS，
-        而且只有真正变过的角色需要重跑。
+        {meta && <>{meta.voices.length} voices available. </>}Gender comes from the voice itself,
+        so there is no separate setting. Tune these, then hit <strong>Synthesize audio</strong> on
+        the right — edits never trigger TTS on their own, and only speakers that actually changed
+        get re-synthesized.
         {meta?.fallbackVoices && (
           <>
             <br />
             <span style={{ color: 'var(--accent)' }}>
-              ⚠ 现在用的是内置兜底音色表（只有几个示例）。跑一次{' '}
+              ⚠ Using the built-in fallback voice list (just a few samples). Run{' '}
               <code>node --env-file-if-exists=.env scripts/fetch-fish-voices.mjs</code>{' '}
-              从 fish.audio 公开库拉一份带描述的真表。
+              to pull the real catalogue from the fish.audio public library.
             </span>
           </>
         )}
@@ -116,13 +117,13 @@ function SpeakerCard({
       <div className="spread">
         <div className="row" style={{ gap: 8 }}>
           <strong>{speaker.name}</strong>
-          <span className="tiny muted">{speaker.lineCount} 句</span>
-          {speaking && <span className="pill on">正在说</span>}
+          <span className="tiny muted">{speaker.lineCount} lines</span>
+          {speaking && <span className="pill on">speaking</span>}
         </div>
         <div className="row" style={{ gap: 6 }}>
           {speaker.sampleHash && (
             <button className="small ghost" onClick={() => onPlaySample(speaker.sampleHash!)}>
-              ▶ 试听
+              ▶ Preview
             </button>
           )}
           {isHost && (
@@ -147,7 +148,7 @@ function SpeakerCard({
         <>
           <div className="dims">
             <label className="field">
-              音色
+              Voice
               <select
                 value={speaker.voice}
                 onChange={(e) => onUpdate(speaker.name, { voice: e.target.value })}
@@ -179,16 +180,16 @@ function SpeakerCard({
             ))}
 
             <label className="field">
-              朗读设备
+              Read by
               <select
                 value={speaker.deviceId ?? ''}
                 onChange={(e) => onAssign(speaker.name, e.target.value || null)}
               >
-                <option value="">（未分配）</option>
+                <option value="">(unassigned)</option>
                 {devices.map((d) => (
                   <option key={d.id} value={d.id}>
                     {d.name}
-                    {d.online ? '' : '（离线）'}
+                    {d.online ? '' : ' (offline)'}
                   </option>
                 ))}
               </select>
@@ -197,7 +198,7 @@ function SpeakerCard({
 
           <div style={{ marginTop: 10 }}>
             <button className="small ghost" onClick={() => setOpen((v) => !v)}>
-              {open ? '收起' : '查看/编辑'} 风格标签 {speaker.custom ? '· 已手改' : ''}
+              {open ? 'Hide' : 'View / edit'} style tag {speaker.custom ? '· edited' : ''}
             </button>
 
             {open && (
@@ -217,7 +218,7 @@ function SpeakerCard({
                       setDraft(null);
                     }}
                   >
-                    保存
+                    Save
                   </button>
                   <button
                     className="small ghost"
@@ -226,19 +227,19 @@ function SpeakerCard({
                       onUpdate(speaker.name, { resetInstructions: true });
                     }}
                   >
-                    按下拉重新生成
+                    Rebuild from dropdowns
                   </button>
                   {draft !== null && (
                     <button className="small ghost" onClick={() => setDraft(null)}>
-                      撤销
+                      Revert
                     </button>
                   )}
                 </div>
                 <p className="tiny muted" style={{ margin: 0 }}>
-                  这段文字会以 <code>[方括号]</code> 的形式拼在台词前面发给 Fish{' '}
-                  {meta?.model ?? 's2.1-pro'} —— 括号里可以写任意自然语言，
-                  比如「疲惫地，几乎在叹气」。标签本身不会被读出来。
-                  语速不在这里，它走单独的 <code>prosody.speed</code> 参数。
+                  This text is prepended to the line in <code>[brackets]</code> before it goes to
+                  Fish Audio. Anything in plain language works — e.g. &ldquo;tired, almost
+                  sighing&rdquo;. The tag itself is never read aloud. Pace is not here: it uses the
+                  separate <code>prosody.speed</code> parameter.
                 </p>
               </div>
             )}
@@ -247,7 +248,7 @@ function SpeakerCard({
       ) : (
         <p className="tiny muted" style={{ margin: '8px 0 0' }}>
           {voiceInfo?.label ?? speaker.voice} ·{' '}
-          {assigned ? `由「${assigned.name}」朗读` : '还没分配设备'}
+          {assigned ? `read by ${assigned.name}` : 'no device assigned'}
         </p>
       )}
     </div>

@@ -5,7 +5,7 @@ import next from 'next';
 import { db, DATA_DIR, storageInfo } from './server/db.js';
 import { createApiRouter } from './server/api.js';
 import { attachRealtime } from './server/realtime.js';
-import { apiKeyProblem, TTS_MODEL } from './server/tts.js';
+import { apiKeyProblem, DEFAULT_TTS_MODEL } from './server/tts.js';
 
 const dev = process.env.NODE_ENV !== 'production';
 const port = Number(process.env.PORT) || 3000;
@@ -44,7 +44,7 @@ httpServer.listen(port, '0.0.0.0', () => {
       console.log('            ⚠️  没挂上的话每次重部署，整份 transcript 都要重新 TTS 一遍。');
     }
   }
-  console.log(`  TTS: ${TTS_MODEL}`);
+  console.log(`  TTS: Fish Audio · 新房间默认用 ${DEFAULT_TTS_MODEL}（房间设置里可切换）`);
 
   const problem = apiKeyProblem();
   if (problem) {

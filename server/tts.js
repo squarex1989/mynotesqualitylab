@@ -19,7 +19,28 @@ import { db, audioPath } from './db.js';
 
 const BASE_URL = () => (process.env.FISH_BASE_URL || 'https://api.fish.audio').replace(/\/$/, '');
 
-export const TTS_MODEL = process.env.FISH_MODEL || 's2.1-pro-free';
+// 可选模型。免费和付费是同一个模型、同样质量，区别只在 Fair Use 和有无
+// 延迟/可用性保证 —— 所以做成房间级开关，随时能切。
+export const TTS_MODELS = [
+  {
+    id: 's2.1-pro-free',
+    label: 'Free',
+    note: 'Same model and quality as paid. $0 under fair use, no latency or uptime guarantees.',
+  },
+  {
+    id: 's2.1-pro',
+    label: 'Paid',
+    note: '$15 per 1M UTF-8 bytes, with latency and uptime guarantees.',
+  },
+];
+
+export const DEFAULT_TTS_MODEL = TTS_MODELS.some((m) => m.id === process.env.FISH_MODEL)
+  ? process.env.FISH_MODEL
+  : 's2.1-pro-free';
+
+export function normalizeModel(model) {
+  return TTS_MODELS.some((m) => m.id === model) ? model : DEFAULT_TTS_MODEL;
+}
 const MP3_BITRATE = Number(process.env.FISH_MP3_BITRATE) || 128;
 // normal = 质量更好，balanced = 更快。朗读场景不在乎首字延迟，选质量
 const LATENCY = process.env.FISH_LATENCY || 'normal';
@@ -31,9 +52,9 @@ const LATENCY = process.env.FISH_LATENCY || 'normal';
  * @returns {string|null} 有问题时返回给人看的原因
  */
 export function apiKeyProblem(key = process.env.FISH_API_KEY) {
-  if (!key) return '没有配置 FISH_API_KEY';
-  if (/[^\x20-\x7e]/.test(key)) return 'FISH_API_KEY 里有非 ASCII 字符，看起来还是占位符没换成真 key';
-  if (key.length < 20) return `FISH_API_KEY 只有 ${key.length} 个字符，不像是一个真的 key`;
+  if (!key) return 'FISH_API_KEY is not set';
+  if (/[^\x20-\x7e]/.test(key)) return 'FISH_API_KEY contains non-ASCII characters — looks like the placeholder was never replaced';
+  if (key.length < 20) return `FISH_API_KEY is only ${key.length} characters — that does not look like a real key`;
   return null;
 }
 
@@ -41,10 +62,10 @@ export function apiKeyProblem(key = process.env.FISH_API_KEY) {
  * 音频的身份 = 模型 + 音色 + 风格标签 + 语速 + 文本。
  * 任何一项变了就是另一个文件；都没变就直接命中缓存，不再调 API。
  */
-export function audioHash({ voice, instructions, speed = 1, text }) {
+export function audioHash({ model, voice, instructions, speed = 1, text }) {
   return crypto
     .createHash('sha256')
-    .update(`${TTS_MODEL}|${voice}|${instructions}|${speed}|${text}`)
+    .update(`${normalizeModel(model)}|${voice}|${instructions}|${speed}|${text}`)
     .digest('hex')
     .slice(0, 32);
 }
@@ -74,9 +95,9 @@ async function probeDurationMs(buffer) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function synthesize({ voice, instructions, speed, text }) {
+async function synthesize({ model, voice, instructions, speed, text }) {
   const problem = apiKeyProblem();
-  if (problem) throw new Error(`${problem} —— 改好 .env 后重启服务`);
+  if (problem) throw new Error(`${problem} — fix .env and restart the server`);
 
   // S2.1-Pro 的风格控制是 [方括号标签] 拼在正文前面，标签本身不会被读出来
   const payload = {
@@ -98,7 +119,7 @@ async function synthesize({ voice, instructions, speed, text }) {
         headers: {
           authorization: `Bearer ${process.env.FISH_API_KEY}`,
           'content-type': 'application/msgpack',
-          model: TTS_MODEL,
+          model: normalizeModel(model),
         },
         body: msgpackEncode(payload),
         signal: AbortSignal.timeout(120000),
@@ -107,10 +128,10 @@ async function synthesize({ voice, instructions, speed, text }) {
       if (res.ok) {
         const contentType = res.headers.get('content-type') || '';
         const buf = Buffer.from(await res.arrayBuffer());
-        if (!buf.length) throw new Error('返回了 0 字节音频');
+        if (!buf.length) throw new Error('The API returned 0 bytes of audio');
         // 出错时有些网关会回 JSON 而不是音频，content-type 能识破
         if (contentType.includes('application/json')) {
-          throw new Error(`期望音频却收到 JSON：${buf.toString('utf8').slice(0, 200)}`);
+          throw new Error(`Expected audio, got JSON: ${buf.toString('utf8').slice(0, 200)}`);
         }
         return buf;
       }
@@ -163,8 +184,8 @@ const inflight = new Map();
  * 拿到这句话的音频；已缓存就直接返回，没有才调 TTS。
  * @returns {Promise<{hash: string, durationMs: number, cached: boolean}>}
  */
-export async function ensureAudio({ voice, instructions, speed = 1, text }) {
-  const hash = audioHash({ voice, instructions, speed, text });
+export async function ensureAudio({ model, voice, instructions, speed = 1, text }) {
+  const hash = audioHash({ model, voice, instructions, speed, text });
 
   const hit = lookupAudio(hash);
   if (hit) return { hash, durationMs: hit.duration_ms, cached: true };
@@ -172,7 +193,7 @@ export async function ensureAudio({ voice, instructions, speed = 1, text }) {
   if (inflight.has(hash)) return inflight.get(hash);
 
   const task = (async () => {
-    const buffer = await synthesize({ voice, instructions, speed, text });
+    const buffer = await synthesize({ model, voice, instructions, speed, text });
     const durationMs = await probeDurationMs(buffer);
     const tmp = `${audioPath(hash)}.${process.pid}.tmp`;
     await fsp.writeFile(tmp, buffer);

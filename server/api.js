@@ -5,7 +5,7 @@ import { parseTranscript } from './parse.js';
 import { voices, usingFallbackVoices, DIMENSIONS } from './voices.js';
 import { createRoom, getRoom, isHostToken, setTranscript, getLines, roomState } from './rooms.js';
 import { jobStatus } from './generate.js';
-import { apiKeyProblem, TTS_MODEL } from './tts.js';
+import { apiKeyProblem, TTS_MODELS, DEFAULT_TTS_MODEL } from './tts.js';
 
 const HASH_RE = /^[a-f0-9]{32}$/;
 
@@ -17,7 +17,7 @@ export function createApiRouter({ broadcast }) {
 
   const requireRoom = (req, res, next) => {
     const room = getRoom(req.params.id);
-    if (!room) return res.status(404).json({ error: '房间不存在' });
+    if (!room) return res.status(404).json({ error: 'Room not found' });
     req.room = room;
     next();
   };
@@ -25,7 +25,7 @@ export function createApiRouter({ broadcast }) {
   const requireHost = (req, res, next) => {
     const token = req.get('x-host-token');
     if (!isHostToken(req.room, token)) {
-      return res.status(403).json({ error: '只有房主可以做这个操作' });
+      return res.status(403).json({ error: 'Only the host can do that' });
     }
     next();
   };
@@ -36,7 +36,8 @@ export function createApiRouter({ broadcast }) {
     res.json({
       voices: voices(),
       dimensions: DIMENSIONS,
-      model: TTS_MODEL,
+      models: TTS_MODELS,
+      defaultModel: DEFAULT_TTS_MODEL,
       fallbackVoices: usingFallbackVoices(),
       ttsConfigured: !problem,
       ttsProblem: problem,
@@ -80,7 +81,7 @@ export function createApiRouter({ broadcast }) {
     const parsed = parseTranscript(text, { mergeConsecutive, excludeSpeakers });
 
     if (!parsed.lines.length) {
-      return res.status(400).json({ error: parsed.warnings[0] || '没有解析出台词' });
+      return res.status(400).json({ error: parsed.warnings[0] || 'No lines were parsed' });
     }
 
     try {

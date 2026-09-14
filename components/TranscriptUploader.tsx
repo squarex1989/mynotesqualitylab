@@ -5,12 +5,17 @@ import { api } from '@/lib/api';
 import { getHostToken } from '@/lib/identity';
 import type { ParsePreview } from '@/lib/types';
 
-const SAMPLE = `Alice: 我们先过一下上周的数据。
-Bob: 等一下，我这边的图还没刷出来。
-Alice: 没事，我先说结论——留存掉了三个点。
-Carol: 三个点是环比还是同比？
-Alice: 环比。同比还是涨的。
-Bob: 好了，我看到了。掉的主要是新用户第二天。`;
+const SAMPLE = `Alice: Let's start with last week's numbers.
+Bob: Hold on, my chart hasn't loaded yet.
+Alice: Never mind, I'll give you the conclusion — retention dropped three points.
+Carol: Three points week over week, or year over year?
+Alice: Week over week. Year over year we're still up.
+Bob: Okay, I see it now. It's mostly day-two for new users.
+Carol: So what did we ship last week?
+Bob: We moved the skip button down in the third onboarding step.
+Alice: Then that's almost certainly it.
+Carol: Do we roll it back?
+Alice: Roll it back first, then run a proper A/B.`;
 
 export function TranscriptUploader({ roomId }: { roomId: string }) {
   const [text, setText] = useState('');
@@ -43,7 +48,7 @@ export function TranscriptUploader({ roomId }: { roomId: string }) {
   const onFile = async (file: File) => {
     setError(null);
     if (file.size > 8 * 1024 * 1024) {
-      setError('文件超过 8MB，太大了');
+      setError('That file is over 8MB — too big');
       return;
     }
     setText(await file.text());
@@ -52,7 +57,7 @@ export function TranscriptUploader({ roomId }: { roomId: string }) {
   const upload = async () => {
     const token = getHostToken(roomId);
     if (!token) {
-      setError('本机不是这个房间的房主，无法上传');
+      setError('This device is not the host of this room');
       return;
     }
     setUploading(true);
@@ -71,18 +76,18 @@ export function TranscriptUploader({ roomId }: { roomId: string }) {
 
   return (
     <div className="card">
-      <h2>上传 transcript</h2>
+      <h2>Upload a transcript</h2>
       <p className="sub">
-        每行 <code>说话人: 内容</code>。带时间戳的会议纪要（Zoom / 腾讯会议那种）也认，
-        时间戳会自动去掉。
+        One line per turn: <code>Speaker: text</code>. Timestamped meeting notes (Zoom, Teams and
+        friends) work too — the timestamps are stripped automatically.
       </p>
 
       <div className="row" style={{ marginBottom: 10 }}>
         <button className="small" onClick={() => fileRef.current?.click()}>
-          选个文件
+          Choose a file
         </button>
         <button className="small ghost" onClick={() => setText(SAMPLE)}>
-          塞一段示例
+          Insert a sample
         </button>
         <label className="row tiny muted" style={{ gap: 6, cursor: 'pointer' }}>
           <input
@@ -91,7 +96,7 @@ export function TranscriptUploader({ roomId }: { roomId: string }) {
             onChange={(e) => setMerge(e.target.checked)}
             style={{ width: 'auto' }}
           />
-          合并同一个人连着说的几句
+          Merge consecutive turns by the same speaker
         </label>
         <input
           ref={fileRef}
@@ -110,7 +115,7 @@ export function TranscriptUploader({ roomId }: { roomId: string }) {
         rows={12}
         value={text}
         onChange={(e) => setText(e.target.value)}
-        placeholder={'Alice: 我们先过一下上周的数据。\nBob: 等一下，我这边的图还没刷出来。'}
+        placeholder={"Alice: Let's start with last week's numbers.\nBob: Hold on, my chart hasn't loaded yet."}
         onDrop={(e) => {
           const f = e.dataTransfer.files?.[0];
           if (f) {
@@ -120,21 +125,21 @@ export function TranscriptUploader({ roomId }: { roomId: string }) {
         }}
       />
 
-      {parsing && <p className="tiny muted">解析中…</p>}
+      {parsing && <p className="tiny muted">Parsing…</p>}
 
       {preview && (
         <div style={{ marginTop: 14 }}>
           <div className="row">
-            <span className="pill on">{preview.lineCount} 句</span>
-            <span className="pill">{preview.speakers.length} 个说话人</span>
-            <span className="pill">{preview.charCount.toLocaleString()} 字</span>
-            <span className="pill">格式 {preview.format}</span>
+            <span className="pill on">{preview.lineCount} lines</span>
+            <span className="pill">{preview.speakers.length} speakers</span>
+            <span className="pill">{preview.charCount.toLocaleString()} chars</span>
+            <span className="pill">{preview.format}</span>
           </div>
 
           {preview.candidates.length > 0 && (
             <>
               <p className="tiny muted" style={{ margin: '12px 0 6px' }}>
-                认出来的说话人 —— 点一下可以取消，被取消的那行会并回上一句：
+                Detected speakers — click one to reject it; that line merges into the previous turn:
               </p>
               <div className="row">
                 {preview.candidates.map((c) => {
@@ -176,7 +181,7 @@ export function TranscriptUploader({ roomId }: { roomId: string }) {
               ))}
               {preview.lineCount > preview.preview.length && (
                 <p className="tiny muted" style={{ paddingLeft: 8 }}>
-                  …还有 {preview.lineCount - preview.preview.length} 句
+                  …and {preview.lineCount - preview.preview.length} more
                 </p>
               )}
             </div>
@@ -193,18 +198,18 @@ export function TranscriptUploader({ roomId }: { roomId: string }) {
       <div className="row" style={{ marginTop: 16 }}>
         {!confirming ? (
           <button className="primary" disabled={!ready || uploading} onClick={() => setConfirming(true)}>
-            提交 transcript
+            Submit transcript
           </button>
         ) : (
           <>
             <span className="tiny" style={{ color: 'var(--accent)' }}>
-              提交之后这个房间就锁定了，transcript 不能再换 —— 确认？
+              Once submitted this room is locked and the transcript can't be replaced. Sure?
             </span>
             <button className="primary" onClick={upload} disabled={uploading}>
-              {uploading ? '提交中…' : '确认提交'}
+              {uploading ? 'Submitting…' : 'Yes, submit'}
             </button>
             <button className="ghost small" onClick={() => setConfirming(false)} disabled={uploading}>
-              再看看
+              Let me look again
             </button>
           </>
         )}

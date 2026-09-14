@@ -23,6 +23,10 @@ export function useRoom(roomId: string) {
   const socketRef = useRef<Socket | null>(null);
   const engineRef = useRef<AudioEngine | null>(null);
   const ambienceRef = useRef<AmbiencePlayer | null>(null);
+
+  // 惰性创建：构造函数里不碰 AudioContext，所以 render 期建也没有副作用
+  if (!engineRef.current) engineRef.current = new AudioEngine();
+  if (!ambienceRef.current) ambienceRef.current = new AmbiencePlayer();
   const ambienceHostRef = useRef<HTMLDivElement | null>(null);
   const offsetRef = useRef(0); // serverTime = localTime + offset
 
@@ -63,8 +67,6 @@ export function useRoom(roomId: string) {
 
     const myId = getDeviceId();
     setDeviceId(myId);
-    engineRef.current = new AudioEngine();
-    ambienceRef.current = new AmbiencePlayer();
 
     const socket = io({
       path: '/socket.io',
@@ -126,7 +128,7 @@ export function useRoom(roomId: string) {
       setPhase('idle');
       setElapsedMs(0);
       setPrepareRemaining(0);
-      if (reason === 'finished') pushToast('success', '读完了');
+      if (reason === 'finished') pushToast('success', 'Done reading');
     });
 
     return () => {
@@ -137,6 +139,54 @@ export function useRoom(roomId: string) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId]);
+
+  /* ---------------- 声音解锁 ----------------
+   * 浏览器要的是「任意用户手势」，不是「点那个特定按钮」。所以这里：
+   *   1. 进页面先静默试一次 —— 站点互动度够或本页已交互过的话直接就成了
+   *   2. 否则把首次 pointerdown / keydown / touchstart 当手势，点哪都行
+   *   3. 从后台切回前台时 AudioContext 可能被挂起，自动再恢复一次
+   * 那个横幅只是兜底提示，用户随手点任何东西它就会自己消失。
+   */
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    let done = false;
+
+    const report = (unlocked: boolean) => {
+      setAudioUnlocked(unlocked);
+      socketRef.current?.emit('device:audio', { unlocked });
+    };
+
+    const attempt = async (fromGesture: boolean) => {
+      const okNow = await engine.tryResume();
+      if (okNow) {
+        report(true);
+        if (fromGesture) void armAmbienceRef.current?.();
+        if (!done) {
+          done = true;
+          detach();
+        }
+      }
+      return okNow;
+    };
+
+    const onGesture = () => void attempt(true);
+    const events: (keyof DocumentEventMap)[] = ['pointerdown', 'keydown', 'touchstart'];
+    const detach = () => events.forEach((e) => document.removeEventListener(e, onGesture, true));
+    events.forEach((e) => document.addEventListener(e, onGesture, true));
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void attempt(false);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
+    void attempt(false);
+
+    return () => {
+      detach();
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
 
   /* ---------------- 进入准备阶段：预加载自己的那部分 ---------------- */
   const prepareLocal = useCallback(
@@ -154,7 +204,7 @@ export function useRoom(roomId: string) {
       } else {
         engine.prepare(payload.token, mine); // 记下排期，解锁后仍能补上
         if (mine.length) {
-          pushToast('error', '这台设备还没启用声音，它负责的台词会没声音');
+          pushToast('error', 'Audio is still blocked here — this device\'s lines will be silent');
         }
       }
 
@@ -190,28 +240,38 @@ export function useRoom(roomId: string) {
     socketRef.current?.emit(event, payload);
   }, []);
 
+  /** 这台机器是环境音源时，把 YouTube 播放器在手势里“点亮” */
+  const armAmbience = useCallback(async () => {
+    const amb = ambienceRef.current;
+    const url = state?.settings.ambienceUrl;
+    const isAmb =
+      state?.settings.ambienceDevice === deviceId && state?.settings.noiseMode === 'noisy';
+    if (!amb || !url || !isAmb || !ambienceHostRef.current || amb.isArmed) return;
+    try {
+      await amb.init(ambienceHostRef.current, url, state!.settings.ambienceVolume);
+      amb.arm();
+      setAmbienceStatus((s) => ({ ...s, isAmbienceDevice: true, ready: true, armed: true, error: null }));
+    } catch (err: any) {
+      setAmbienceStatus((s) => ({ ...s, isAmbienceDevice: true, error: err.message }));
+    }
+  }, [state, deviceId]);
+
+  // 上面那个解锁 effect 只跑一次，但 armAmbience 依赖 state；用 ref 拿最新的
+  const armAmbienceRef = useRef(armAmbience);
+  armAmbienceRef.current = armAmbience;
+
   const unlockAudio = useCallback(async () => {
     const engine = engineRef.current;
     if (!engine) return;
-    const ok = await engine.unlock();
+    const ok = await engine.tryResume();
     setAudioUnlocked(ok);
     socketRef.current?.emit('device:audio', { unlocked: ok });
-
-    // 这台机器如果同时是环境音源，顺手在同一次手势里把 YouTube 播放器“点亮”
-    const amb = ambienceRef.current;
-    const url = state?.settings.ambienceUrl;
-    const isAmb = state?.settings.ambienceDevice === deviceId && state?.settings.noiseMode === 'noisy';
-    if (amb && url && isAmb && ambienceHostRef.current) {
-      try {
-        await amb.init(ambienceHostRef.current, url, state!.settings.ambienceVolume);
-        amb.arm();
-        setAmbienceStatus((s) => ({ ...s, isAmbienceDevice: true, ready: true, armed: true, error: null }));
-      } catch (err: any) {
-        setAmbienceStatus((s) => ({ ...s, isAmbienceDevice: true, error: err.message }));
-      }
-    }
-    if (ok) pushToast('success', '这台设备已经可以出声了');
-  }, [state, deviceId, pushToast]);
+    await armAmbience();
+    pushToast(
+      ok ? 'success' : 'error',
+      ok ? 'Audio is enabled on this device' : 'The browser still refuses to play audio here'
+    );
+  }, [armAmbience, pushToast]);
 
   const actions = useMemo(
     () => ({

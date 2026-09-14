@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import { parseYouTubeId } from '@/lib/ambience';
-import type { Device, RoomSettings } from '@/lib/types';
+import type { Device, Meta, RoomSettings } from '@/lib/types';
 
 interface Props {
   settings: RoomSettings;
   devices: Device[];
+  meta: Meta | null;
   isHost: boolean;
   onChange: (patch: Partial<RoomSettings>) => void;
 }
@@ -38,52 +39,59 @@ function Seg<T extends string>({
   );
 }
 
-export function ToneSettings({ settings, devices, isHost, onChange }: Props) {
-  const [url, setUrl] = useState(settings.ambienceUrl ?? '');
+export function ToneSettings({ settings, devices, meta, isHost, onChange }: Props) {
   const [advanced, setAdvanced] = useState(false);
 
+  // 每个场景各存一份链接，所以输入框编辑的是「当前选中场景」那一份
+  const scene = settings.ambienceKind;
+  const savedUrl = (scene === 'airport' ? settings.ambienceUrlAirport : settings.ambienceUrlCafe) ?? '';
+  const urlField = scene === 'airport' ? 'ambienceUrlAirport' : 'ambienceUrlCafe';
+
+  const [url, setUrl] = useState(savedUrl);
   useEffect(() => {
-    setUrl(settings.ambienceUrl ?? '');
-  }, [settings.ambienceUrl]);
+    setUrl(savedUrl);
+  }, [savedUrl]);
 
   const parsed = parseYouTubeId(url);
-  const urlDirty = (settings.ambienceUrl ?? '') !== url;
+  const urlDirty = savedUrl !== url;
+  const models = meta?.models ?? [];
+  const activeModel = models.find((m) => m.id === settings.ttsModel);
 
   return (
     <div className="card">
-      <h2>房间基调</h2>
-      <p className="sub">这两项决定了这屋子听起来像一场会议，还是一场吵架。</p>
+      <h2>Room settings</h2>
+      <p className="sub">These decide whether the room sounds like a meeting or an argument.</p>
 
       <div className="stack" style={{ gap: 16 }}>
         <div>
           <div className="spread">
-            <span>朗读顺序</span>
+            <span>Reading order</span>
             <Seg
               value={settings.orderMode}
               disabled={!isHost}
               options={[
-                { value: 'ordered', label: '有序' },
-                { value: 'chaotic', label: '混乱' },
+                { value: 'ordered', label: 'Orderly' },
+                { value: 'chaotic', label: 'Chaotic' },
               ]}
               onChange={(v) => onChange({ orderMode: v })}
             />
           </div>
           <p className="tiny muted" style={{ margin: '4px 0 0' }}>
             {settings.orderMode === 'ordered'
-              ? '一句读完停一下，下一句再开口。'
-              : `每 ${Math.round(settings.chaosPeriodMs / 1000)} 秒抢一次话：下一句提前 1–3 秒开口，被抢的那句同时压低到 ${Math.round(settings.duckGain * 100)}%。`}
+              ? 'One line finishes, a short pause, then the next one starts.'
+              : `Every ~${Math.round(settings.chaosPeriodMs / 1000)}s someone cuts in: the next line starts 1–3s early and the interrupted one ducks to ${Math.round(settings.duckGain * 100)}%.`}
           </p>
         </div>
 
         <div>
           <div className="spread">
-            <span>环境音</span>
+            <span>Ambience</span>
             <Seg
               value={settings.noiseMode}
               disabled={!isHost}
               options={[
-                { value: 'quiet', label: '安静' },
-                { value: 'noisy', label: '嘈杂' },
+                { value: 'quiet', label: 'Quiet' },
+                { value: 'noisy', label: 'Noisy' },
               ]}
               onChange={(v) => onChange({ noiseMode: v })}
             />
@@ -92,20 +100,20 @@ export function ToneSettings({ settings, devices, isHost, onChange }: Props) {
           {settings.noiseMode === 'noisy' && (
             <div className="stack" style={{ marginTop: 12 }}>
               <div className="spread">
-                <span className="tiny muted">场景</span>
+                <span className="tiny muted">Scene</span>
                 <Seg
                   value={settings.ambienceKind}
                   disabled={!isHost}
                   options={[
-                    { value: 'cafe', label: '咖啡馆' },
-                    { value: 'airport', label: '机场' },
+                    { value: 'cafe', label: 'Café' },
+                    { value: 'airport', label: 'Airport' },
                   ]}
                   onChange={(v) => onChange({ ambienceKind: v })}
                 />
               </div>
 
               <label className="field">
-                YouTube 链接（{settings.ambienceKind === 'cafe' ? '咖啡馆' : '机场'} 环境音）
+                YouTube link for {scene === 'cafe' ? 'café' : 'airport'} ambience
                 <div className="row" style={{ flexWrap: 'nowrap' }}>
                   <input
                     value={url}
@@ -117,27 +125,28 @@ export function ToneSettings({ settings, devices, isHost, onChange }: Props) {
                     <button
                       className="small"
                       disabled={!urlDirty || (url.trim() !== '' && !parsed)}
-                      onClick={() => onChange({ ambienceUrl: url.trim() || null })}
+                      onClick={() => onChange({ [urlField]: url.trim() || null })}
                     >
-                      保存
+                      Save
                     </button>
                   )}
                 </div>
               </label>
               {url && !parsed && (
                 <p className="tiny" style={{ color: 'var(--err)', margin: 0 }}>
-                  这个链接解析不出视频 ID
+                  Can&apos;t find a YouTube video ID in that link
                 </p>
               )}
               {parsed && (
                 <p className="tiny muted" style={{ margin: 0 }}>
-                  视频 ID: <code>{parsed.id}</code>
-                  {parsed.start ? ` · 从 ${parsed.start}s 开始` : ''} · 会循环播放
+                  Video ID <code>{parsed.id}</code>
+                  {parsed.start ? ` · starts at ${parsed.start}s` : ''} · loops
+                  {savedUrl !== url ? ' · unsaved' : ''}
                 </p>
               )}
 
               <label className="field">
-                音量 {settings.ambienceVolume}%
+                Volume {settings.ambienceVolume}%
                 <input
                   type="range"
                   min={0}
@@ -149,37 +158,59 @@ export function ToneSettings({ settings, devices, isHost, onChange }: Props) {
               </label>
 
               <label className="field">
-                由哪台设备放环境音
+                Which device plays the ambience
                 <select
                   value={settings.ambienceDevice ?? ''}
                   disabled={!isHost}
                   onChange={(e) => onChange({ ambienceDevice: e.target.value || null })}
                 >
-                  <option value="">（不指定，就没有环境音）</option>
+                  <option value="">(none — no ambience)</option>
                   {devices.map((d) => (
                     <option key={d.id} value={d.id}>
                       {d.name}
-                      {d.online ? '' : '（离线）'}
+                      {d.online ? '' : ' (offline)'}
                     </option>
                   ))}
                 </select>
               </label>
               <p className="tiny muted" style={{ margin: 0 }}>
-                指定之后，这台设备身上的角色会被挪给别的机器 —— 它专心当那间咖啡馆。
+                Once picked, that device&apos;s speakers move to other machines — it just plays the
+                room.
               </p>
             </div>
           )}
         </div>
 
+        {models.length > 0 && (
+          <div>
+            <div className="spread">
+              <span>TTS model</span>
+              <Seg
+                value={settings.ttsModel}
+                disabled={!isHost}
+                options={models.map((m) => ({ value: m.id, label: m.label }))}
+                onChange={(v) => onChange({ ttsModel: v })}
+              />
+            </div>
+            <p className="tiny muted" style={{ margin: '4px 0 0' }}>
+              {activeModel?.note}
+            </p>
+            <p className="tiny" style={{ margin: '4px 0 0', color: 'var(--accent)' }}>
+              The model is part of the audio cache key, so switching invalidates every clip in this
+              room and you&apos;ll need to synthesize again.
+            </p>
+          </div>
+        )}
+
         {isHost && (
           <div>
             <button className="small ghost" onClick={() => setAdvanced((v) => !v)}>
-              {advanced ? '收起' : '更细的参数'}
+              {advanced ? 'Hide' : 'Show'} fine-grained settings
             </button>
             {advanced && (
               <div className="dims" style={{ marginTop: 10 }}>
                 <label className="field">
-                  句间停顿 {settings.gapMs}ms
+                  Gap between lines {settings.gapMs}ms
                   <input
                     type="range"
                     min={0}
@@ -190,7 +221,7 @@ export function ToneSettings({ settings, devices, isHost, onChange }: Props) {
                   />
                 </label>
                 <label className="field">
-                  抢话频率 每 {Math.round(settings.chaosPeriodMs / 1000)}s
+                  Interrupt every {Math.round(settings.chaosPeriodMs / 1000)}s
                   <input
                     type="range"
                     min={5}
@@ -201,7 +232,7 @@ export function ToneSettings({ settings, devices, isHost, onChange }: Props) {
                   />
                 </label>
                 <label className="field">
-                  被抢时压到 {Math.round(settings.duckGain * 100)}%
+                  Duck interrupted line to {Math.round(settings.duckGain * 100)}%
                   <input
                     type="range"
                     min={0}

@@ -50,9 +50,10 @@ function loadApi(): Promise<void> {
     const tag = document.createElement('script');
     tag.src = 'https://www.youtube.com/iframe_api';
     tag.async = true;
-    tag.onerror = () => reject(new Error('YouTube 播放器脚本加载失败（网络可能访问不到 youtube.com）'));
+    tag.onerror = () =>
+      reject(new Error('Could not load the YouTube player script (is youtube.com reachable?)'));
     document.head.appendChild(tag);
-    setTimeout(() => reject(new Error('YouTube 播放器加载超时')), 15000);
+    setTimeout(() => reject(new Error('Timed out loading the YouTube player')), 15000);
   });
   return apiPromise;
 }
@@ -73,7 +74,7 @@ export class AmbiencePlayer {
 
   async init(container: HTMLElement, url: string, volume: number) {
     const parsed = parseYouTubeId(url);
-    if (!parsed) throw new Error('这个链接解析不出 YouTube 视频 ID');
+    if (!parsed) throw new Error('No YouTube video ID found in that link');
     this.wantVolume = volume;
 
     if (this.player && this.videoId === parsed.id) {

@@ -49,7 +49,7 @@ export default function Home() {
       rememberRoom(id);
       router.push(`/room/${id}`);
     } catch (err: any) {
-      setError(err.message === '房间不存在' ? `找不到房间 ${id}` : err.message);
+      setError(err.message === 'Room not found' ? `No room called ${id}` : err.message);
       setBusy(null);
     }
   };
@@ -58,45 +58,46 @@ export default function Home() {
     <div className="shell" style={{ maxWidth: 640, paddingTop: 64 }}>
       <h1 style={{ fontSize: 26, margin: '0 0 6px' }}>ReadRoom</h1>
       <p className="muted" style={{ marginTop: 0 }}>
-        上传一份 transcript，把角色分给屋子里的每台电脑，让它们用各自的音色把这场对话读出来。
+        Upload a transcript, hand each speaker to a different computer, and let them read the conversation out loud in their own voices.
       </p>
 
       {ttsProblem && (
         <div className="card" style={{ borderColor: 'rgba(239,111,111,.4)' }}>
           <strong style={{ color: 'var(--err)' }}>{ttsProblem}</strong>
           <p className="sub" style={{ margin: '6px 0 0' }}>
-            可以建房间、上传 transcript、调音色，但点「合成音频」会失败。在项目根目录的{' '}
-            <code>.env</code> 里写上真正的 key 再重启服务。
+            You can still create rooms, upload transcripts and tune voices — but{' '}
+            <strong>Synthesize audio</strong> will fail. Put a real key in <code>.env</code> and
+            restart.
           </p>
         </div>
       )}
 
       <div className="card">
         <label className="field">
-          这台设备叫什么
+          Name this device
           <input
             value={name}
             onChange={(e) => saveName(e.target.value)}
-            placeholder="比如：客厅的 MacBook"
+            placeholder="e.g. MacBook on the couch"
             maxLength={40}
           />
         </label>
         <p className="sub" style={{ margin: '8px 0 0' }}>
-          房主按设备名分配角色，起个能认出来的名字。
+          The host assigns speakers by device name, so pick something recognizable.
         </p>
       </div>
 
       <div className="card">
-        <h2>创建 room</h2>
-        <p className="sub">你会成为房主，负责上传 transcript、调音色、按开始。</p>
+        <h2>Create a room</h2>
+        <p className="sub">You'll be the host: upload the transcript, tune the voices, hit start.</p>
         <button className="primary big" onClick={create} disabled={busy !== null}>
-          {busy === 'create' ? '创建中…' : '创建 room'}
+          {busy === 'create' ? 'Creating…' : 'Create room'}
         </button>
       </div>
 
       <div className="card">
-        <h2>加入 room</h2>
-        <p className="sub">输入房主给你的 6 位房间号。</p>
+        <h2>Join a room</h2>
+        <p className="sub">Enter the 6-character room code from the host.</p>
         <div className="row">
           <input
             value={joinId}
@@ -113,13 +114,13 @@ export default function Home() {
             }}
           />
           <button onClick={() => join()} disabled={busy !== null || joinId.trim().length < 4}>
-            {busy === 'join' ? '加入中…' : '加入'}
+            {busy === 'join' ? 'Joining…' : 'Join'}
           </button>
         </div>
 
         {recent.length > 0 && (
           <div className="row" style={{ marginTop: 14 }}>
-            <span className="tiny muted">最近去过：</span>
+            <span className="tiny muted">Recent:</span>
             {recent.map((r) => (
               <button key={r} className="small ghost" onClick={() => join(r)}>
                 {r}

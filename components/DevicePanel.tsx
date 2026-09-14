@@ -32,15 +32,16 @@ export function DevicePanel({
   return (
     <div className="card">
       <div className="spread" style={{ marginBottom: 4 }}>
-        <h2>设备（{devices.filter((d) => d.online).length} 在线）</h2>
+        <h2>Devices ({devices.filter((d) => d.online).length} online)</h2>
         {isHost && (
           <button className="small ghost" onClick={onAutoAssign}>
-            重新自动分配
+            Reassign automatically
           </button>
         )}
       </div>
       <p className="sub">
-        一台设备可以拿到多个角色；只有你一台机器也能跑起来，它会把所有角色都念了。
+        One device can hold several speakers. A single machine works fine too — it just reads
+        everyone.
       </p>
 
       <div className="stack">
@@ -57,12 +58,12 @@ export function DevicePanel({
                 <div className="row" style={{ gap: 8 }}>
                   <span className={`dot ${d.online ? 'ok' : ''}`} />
                   <strong>{d.name}</strong>
-                  {d.id === myDeviceId && <span className="pill on">本机</span>}
-                  {d.isHost && <span className="pill">房主</span>}
-                  {isAmbience && <span className="pill on">环境音源</span>}
+                  {d.id === myDeviceId && <span className="pill on">this device</span>}
+                  {d.isHost && <span className="pill">host</span>}
+                  {isAmbience && <span className="pill on">ambience</span>}
                 </div>
                 <span className={`pill ${d.audioReady ? 'ok' : 'err'}`}>
-                  {d.audioReady ? '已启用声音' : '未启用声音'}
+                  {d.audioReady ? 'audio ready' : 'audio blocked'}
                 </span>
               </div>
 
@@ -70,11 +71,11 @@ export function DevicePanel({
                 {mine.length ? (
                   mine.map((s) => (
                     <span key={s.name} className="pill">
-                      {s.name} · {s.lineCount}句
+                      {s.name} · {s.lineCount} lines
                     </span>
                   ))
                 ) : (
-                  <span>没有分到角色</span>
+                  <span>no speakers assigned</span>
                 )}
               </div>
 
@@ -102,7 +103,7 @@ export function DevicePanel({
                           setEditing(false);
                         }}
                       >
-                        保存
+                        Save
                       </button>
                     </>
                   ) : (
@@ -113,7 +114,7 @@ export function DevicePanel({
                         setEditing(true);
                       }}
                     >
-                      改名
+                      Rename
                     </button>
                   ))}
 
@@ -122,7 +123,7 @@ export function DevicePanel({
                     className="small ghost"
                     onClick={() => onSetAmbienceDevice(isAmbience ? null : d.id)}
                   >
-                    {isAmbience ? '取消环境音源' : '设为环境音源'}
+                    {isAmbience ? 'Stop being ambience source' : 'Use as ambience source'}
                   </button>
                 )}
               </div>

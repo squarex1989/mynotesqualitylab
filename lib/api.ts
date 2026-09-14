@@ -9,7 +9,7 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
   } catch {
     /* 非 JSON 响应 */
   }
-  if (!res.ok) throw new Error(body?.error || `请求失败 (${res.status})`);
+  if (!res.ok) throw new Error(body?.error || `Request failed (${res.status})`);
   return body as T;
 }
 
