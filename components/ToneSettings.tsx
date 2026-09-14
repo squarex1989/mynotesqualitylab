@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { parseYouTubeId } from '@/lib/ambience';
 import type { Device, Meta, RoomSettings } from '@/lib/types';
 
@@ -40,8 +40,6 @@ function Seg<T extends string>({
 }
 
 export function ToneSettings({ settings, devices, meta, isHost, onChange }: Props) {
-  const [advanced, setAdvanced] = useState(false);
-
   // 每个场景各存一份链接，输入框编辑的是「当前选中场景」那一份。
   //
   // 这里刻意不用 useState(初始值) + useEffect 去同步：那种写法有一帧延迟，
@@ -82,8 +80,53 @@ export function ToneSettings({ settings, devices, meta, isHost, onChange }: Prop
           <p className="tiny muted" style={{ margin: '4px 0 0' }}>
             {settings.orderMode === 'ordered'
               ? 'One line finishes, a short pause, then the next one starts.'
-              : `Every ~${Math.round(settings.chaosPeriodMs / 1000)}s someone cuts in: the next line starts 1–3s early and the interrupted one ducks to ${Math.round(settings.duckGain * 100)}%.`}
+              : 'Someone cuts in on a timer: the next line starts 1–3s early while the interrupted one ducks.'}
           </p>
+
+          {/* Gap always applies; the two interruption knobs only exist in chaotic mode */}
+          <div className="dims" style={{ marginTop: 10 }}>
+            <label className="field">
+              Gap between lines {settings.gapMs}ms
+              <input
+                type="range"
+                min={0}
+                max={2000}
+                step={50}
+                disabled={!isHost}
+                value={settings.gapMs}
+                onChange={(e) => onChange({ gapMs: Number(e.target.value) })}
+              />
+            </label>
+
+            {settings.orderMode === 'chaotic' && (
+              <>
+                <label className="field">
+                  Interrupt every {Math.round(settings.chaosPeriodMs / 1000)}s
+                  <input
+                    type="range"
+                    min={5}
+                    max={60}
+                    step={1}
+                    disabled={!isHost}
+                    value={Math.round(settings.chaosPeriodMs / 1000)}
+                    onChange={(e) => onChange({ chaosPeriodMs: Number(e.target.value) * 1000 })}
+                  />
+                </label>
+                <label className="field">
+                  Duck interrupted line to {Math.round(settings.duckGain * 100)}%
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={5}
+                    disabled={!isHost}
+                    value={Math.round(settings.duckGain * 100)}
+                    onChange={(e) => onChange({ duckGain: Number(e.target.value) / 100 })}
+                  />
+                </label>
+              </>
+            )}
+          </div>
         </div>
 
         <div>
@@ -205,50 +248,6 @@ export function ToneSettings({ settings, devices, meta, isHost, onChange }: Prop
           </div>
         )}
 
-        {isHost && (
-          <div>
-            <button className="small ghost" onClick={() => setAdvanced((v) => !v)}>
-              {advanced ? 'Hide' : 'Show'} fine-grained settings
-            </button>
-            {advanced && (
-              <div className="dims" style={{ marginTop: 10 }}>
-                <label className="field">
-                  Gap between lines {settings.gapMs}ms
-                  <input
-                    type="range"
-                    min={0}
-                    max={2000}
-                    step={50}
-                    value={settings.gapMs}
-                    onChange={(e) => onChange({ gapMs: Number(e.target.value) })}
-                  />
-                </label>
-                <label className="field">
-                  Interrupt every {Math.round(settings.chaosPeriodMs / 1000)}s
-                  <input
-                    type="range"
-                    min={5}
-                    max={60}
-                    step={1}
-                    value={Math.round(settings.chaosPeriodMs / 1000)}
-                    onChange={(e) => onChange({ chaosPeriodMs: Number(e.target.value) * 1000 })}
-                  />
-                </label>
-                <label className="field">
-                  Duck interrupted line to {Math.round(settings.duckGain * 100)}%
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    step={5}
-                    value={Math.round(settings.duckGain * 100)}
-                    onChange={(e) => onChange({ duckGain: Number(e.target.value) / 100 })}
-                  />
-                </label>
-              </div>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );
