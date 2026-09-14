@@ -4,8 +4,9 @@ import fsp from 'node:fs/promises';
 import { parseBuffer } from 'music-metadata';
 import { db, audioPath } from './db.js';
 
-export const TTS_MODEL = process.env.TTS_MODEL || 'gpt-4o-mini-tts';
-const BASE_URL = () => (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '');
+export const TTS_MODEL = process.env.TTS_MODEL || 'google/gemini-3.1-flash-tts-preview';
+const BASE_URL = () =>
+  (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
 
 // /audio/speech 就是「POST JSON、回原始音频字节」一个请求，用 fetch 直连比套 SDK 简单，
 // 重试和超时本来也是我们自己控制的。
@@ -16,15 +17,16 @@ const BASE_URL = () => (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v
  * 最后在界面上显示成 "Connection error."，让人以为是网络问题。
  * @returns {string|null} 有问题时返回给人看的原因
  */
-export function apiKeyProblem(key = process.env.OPENAI_API_KEY) {
-  if (!key) return '没有配置 OPENAI_API_KEY';
-  if (/[^\x20-\x7e]/.test(key)) return 'OPENAI_API_KEY 里有非 ASCII 字符，看起来还是占位符没换成真 key';
-  if (key.length < 20) return `OPENAI_API_KEY 只有 ${key.length} 个字符，不像是一个真的 key`;
+export function apiKeyProblem(key = process.env.OPENROUTER_API_KEY) {
+  if (!key) return '没有配置 OPENROUTER_API_KEY';
+  if (/[^\x20-\x7e]/.test(key))
+    return 'OPENROUTER_API_KEY 里有非 ASCII 字符，看起来还是占位符没换成真 key';
+  if (key.length < 20) return `OPENROUTER_API_KEY 只有 ${key.length} 个字符，不像是一个真的 key`;
   return null;
 }
 
 /**
- * 音频的身份 = 模型 + 音色 + instructions + 文本。
+ * 音频的身份 = 模型 + 音色 + 风格标签 + 文本。
  * 任何一项变了就是另一个文件；都没变就直接命中缓存，不再调 API。
  */
 export function audioHash({ voice, instructions, text }) {
@@ -64,11 +66,12 @@ async function synthesize({ voice, instructions, text }) {
   const problem = apiKeyProblem();
   if (problem) throw new Error(`${problem} —— 改好 .env 后重启服务`);
 
+  // 这个接口没有 instructions 参数 —— 风格标签得拼在正文前面，
+  // 模型据此决定语气，方括号里的内容本身不会被读出来。
   const body = {
     model: TTS_MODEL,
     voice,
-    input: text,
-    instructions,
+    input: instructions ? `[${instructions}] ${text}` : text,
     response_format: 'mp3',
   };
 
@@ -78,7 +81,7 @@ async function synthesize({ voice, instructions, text }) {
       const res = await fetch(`${BASE_URL()}/audio/speech`, {
         method: 'POST',
         headers: {
-          authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
           'content-type': 'application/json',
         },
         body: JSON.stringify(body),
@@ -120,7 +123,7 @@ async function synthesize({ voice, instructions, text }) {
       const status = err?.status;
       // 余额耗尽 / 配额用完也是 429，但重试一万次也不会变好 —— 直接失败，
       // 别让一份长稿在每句上都白等四轮退避。
-      const hopeless = /insufficient_quota|credit_balance_exhausted|billing/i.test(
+      const hopeless = /insufficient_quota|credit_balance_exhausted|billing|insufficient_credits|requires more credits/i.test(
         `${err?.code || ''} ${err?.message || ''}`
       );
       const retryable =

@@ -2,12 +2,14 @@
 
 上传一份 transcript，把里面的角色分给屋子里的每台电脑，让它们用各自的音色、语气、口音把这场对话读出来。
 
+TTS 用 Gemini 3.1 Flash TTS（经 OpenRouter）。
+
 - **创建 / 加入 room** —— 6 位房间号，其他电脑输号进来
-- **角色设定** —— 每个 speaker 有音色（11 种）+ 年龄感 / 语气 / 口音 / 语速 / 情绪 / 说话习惯，默认随机；`instructions` 也可以直接手写。性别由音色本身决定，不单独设
+- **角色设定** —— 每个 speaker 有音色（Gemini 30 种预置）+ 年龄感 / 语气 / 口音 / 语速 / 情绪 / 说话习惯，默认随机；风格标签也可以直接手写。性别由音色本身决定，不单独设
 - **设备分配** —— 一个角色对一台设备，一台设备可以拿多个角色；只有房主一台机器也能跑
 - **房间基调** —— 有序 / 混乱（定时抢话，被抢的那句同时压低音量）× 安静 / 嘈杂（指定一台设备用 YouTube 链接放咖啡馆或机场环境音）
 - **合成是显式的一步** —— 上传和改设定都不会触发 TTS，房主把所有角色确认好之后点「合成音频」才开跑
-- **音频只合成一次** —— 按「模型 + 音色 + instructions + 文本」的哈希存盘，改哪个角色就只重跑哪个角色；改回用过的设定直接命中缓存，一次 API 都不发
+- **音频只合成一次** —— 按「模型 + 音色 + 风格标签 + 文本」的哈希存盘，改哪个角色就只重跑哪个角色；改回用过的设定直接命中缓存，一次 API 都不发
 
 ---
 
@@ -23,7 +25,7 @@ npm install
 在项目根目录建一个 `.env`（注意把下面这行换成你自己的 key，别原样粘贴）：
 
 ```
-OPENAI_API_KEY=sk-proj-...
+OPENROUTER_API_KEY=sk-or-v1-...
 ```
 
 然后：
@@ -38,12 +40,12 @@ npm run dev
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `OPENAI_API_KEY` | 必填 | 只在服务端使用，永远不会下发到浏览器 |
-| `TTS_MODEL` | `gpt-4o-mini-tts` | |
+| `OPENROUTER_API_KEY` | 必填 | 只在服务端使用，永远不会下发到浏览器 |
+| `TTS_MODEL` | `google/gemini-3.1-flash-tts-preview` | |
 | `PORT` | `3000` | |
 | `DATA_DIR` | `./data` | SQLite 和生成的 mp3 都在这里。部署时指向挂载磁盘 |
 | `TTS_CONCURRENCY` | `4` | 同时并发的 TTS 请求数 |
-| `OPENAI_BASE_URL` | — | 指向别的兼容端点，本地测试时可以指向下面的 mock |
+| `OPENROUTER_BASE_URL` | — | 指向别的兼容端点，本地测试时可以指向下面的 mock |
 
 ### 不花钱地测试
 
@@ -56,7 +58,7 @@ node scripts/mock-tts.js
 另开一个终端：
 
 ```bash
-OPENAI_API_KEY=mock-key-for-local-testing-only OPENAI_BASE_URL=http://127.0.0.1:4010/v1 npm run dev
+OPENROUTER_API_KEY=mock-key-for-local-testing-only OPENROUTER_BASE_URL=http://127.0.0.1:4010/v1 npm run dev
 ```
 
 ---
@@ -103,9 +105,9 @@ SRT / VTT 字幕和 `[{"speaker":"A","content":"..."}]` 这种 JSON 也认。时
 
 **长脚本不会把内存吃爆** —— 客户端只提前 20 秒把音频挂到 Web Audio 时间线上，播完就释放解码后的 PCM，再滚动预取后面几条。
 
-**改设定为什么能不重复花钱** —— 音频的身份是 `sha256(模型 + 音色 + instructions + 文本)`，内容寻址、跨房间共享。改一个角色的口音只会重跑它自己的句子；改回来则一次请求都不发，因为旧文件还在。合成本身是显式触发的，所以调设定的过程完全免费。
+**改设定为什么能不重复花钱** —— 音频的身份是 `sha256(模型 + 音色 + 风格标签 + 文本)`，内容寻址、跨房间共享。改一个角色的口音只会重跑它自己的句子；改回来则一次请求都不发，因为旧文件还在。合成本身是显式触发的，所以调设定的过程完全免费。
 
-**为什么没有“性别”下拉** —— 性别已经由 `voice` 参数决定了（音色下拉里就标着男声 / 女声）。再在 instructions 里写一句 "a male speaker" 只会和音色本身打架，让模型在两个信号之间摇摆。
+**为什么没有“性别”下拉** —— 性别已经由 `voice` 参数决定了（音色下拉里就标着男声 / 女声）。再在风格标签里写一句 "a male speaker" 只会和音色本身打架，让模型在两个信号之间摇摆。
 
 ---
 
@@ -119,7 +121,7 @@ SRT / VTT 字幕和 `[{"speaker":"A","content":"..."}]` 这种 JSON 也认。时
 
 1. Railway 里 **New Project → Deploy from GitHub repo**，选这个仓库
 2. **Variables** 里加两个：
-   - `OPENAI_API_KEY` = 你的 key
+   - `OPENROUTER_API_KEY` = 你的 key
    - `DATA_DIR` = `/data`
 3. **必须加一块 Volume**：服务的 Settings → Volumes → Add Volume，Mount path 填 `/data`
 4. Settings → Networking → **Generate Domain**，拿到公网地址
@@ -134,7 +136,7 @@ Node 版本靠 `.nvmrc`（`24`）和 `package.json` 的 `engines` 决定。**别
 
 ### Render
 
-`render.yaml` 直接可用 —— 建一个 Blueprint 服务，在控制台填 `OPENAI_API_KEY`。
+`render.yaml` 直接可用 —— 建一个 Blueprint 服务，在控制台填 `OPENROUTER_API_KEY`。
 磁盘挂在 `/var/data`，`DATA_DIR` 已经指过去了。注意免费层没有持久磁盘。
 
 ### Fly.io / 自己的 VPS
@@ -144,7 +146,7 @@ Node 版本靠 `.nvmrc`（`24`）和 `package.json` 的 `engines` 决定。**别
 ```bash
 fly launch --no-deploy
 fly volumes create readroom_data --size 5
-fly secrets set OPENAI_API_KEY=sk-proj-...
+fly secrets set OPENROUTER_API_KEY=sk-or-v1-...
 fly deploy
 ```
 
@@ -171,8 +173,8 @@ server.js              自定义 Node server：Next + Express + Socket.IO 一个
 server/
   db.js                node:sqlite 建表；音频文件路径
   parse.js             transcript 解析（纯文本 / 时间戳 / SRT / JSON）
-  voices.js            音色目录、各维度选项、instructions 拼装、随机配置
-  tts.js               OpenAI 调用、内容寻址缓存、时长探测、限流重试
+  voices.js            音色目录、各维度选项、风格标签拼装、随机配置
+  tts.js               OpenRouter 调用、内容寻址缓存、时长探测、限流重试
   generate.js          房间级的批量合成任务（限并发、推进度、跑完再扫一遍）
   schedule.js          把台词排成带绝对偏移的时间线（有序 / 抢话 / 压音量）
   rooms.js             房间、角色、设备、分配、设置的读写

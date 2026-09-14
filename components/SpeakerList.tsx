@@ -50,8 +50,9 @@ export function SpeakerList({
         )}
       </div>
       <p className="sub">
-        性别由音色本身决定，不用单独设。调完这里再去右侧点「合成音频」—— 改动不会自动触发
-        TTS，而且只有真正变过的角色需要重跑。
+        {meta && <>{meta.voices.length} 个音色可选。</>}性别由音色本身决定，不用单独设。
+        调完这里再去右侧点「合成音频」—— 改动不会自动触发 TTS，
+        而且只有真正变过的角色需要重跑。
       </p>
 
       {speakers.map((s) => (
@@ -184,13 +185,13 @@ function SpeakerCard({
 
           <div style={{ marginTop: 10 }}>
             <button className="small ghost" onClick={() => setOpen((v) => !v)}>
-              {open ? '收起' : '查看/编辑'} instructions {speaker.custom ? '· 已手改' : ''}
+              {open ? '收起' : '查看/编辑'} 风格标签 {speaker.custom ? '· 已手改' : ''}
             </button>
 
             {open && (
               <div className="stack" style={{ marginTop: 8 }}>
                 <textarea
-                  rows={7}
+                  rows={3}
                   value={draft ?? speaker.instructions}
                   onChange={(e) => setDraft(e.target.value)}
                   style={{ fontFamily: 'var(--mono)', fontSize: 12 }}
@@ -222,7 +223,9 @@ function SpeakerCard({
                   )}
                 </div>
                 <p className="tiny muted" style={{ margin: 0 }}>
-                  这段文本会原样传给 {meta?.model ?? 'gpt-4o-mini-tts'} 的 instructions 参数。
+                  这段文字会以 <code>[方括号]</code> 的形式拼在台词前面发给{' '}
+                  {meta?.model ?? 'Gemini TTS'} —— 括号里可以写任意自然语言，
+                  比如「疲惫地，几乎在叹气」。标签本身不会被读出来。
                 </p>
               </div>
             )}
