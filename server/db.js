@@ -5,9 +5,40 @@ import path from 'node:path';
 export const DATA_DIR = path.resolve(process.env.DATA_DIR || './data');
 export const AUDIO_DIR = path.join(DATA_DIR, 'audio');
 
+const DB_PATH = path.join(DATA_DIR, 'readroom.db');
+const MARKER_PATH = path.join(DATA_DIR, '.first-boot');
+
+// DATA_DIR 没挂上持久卷时不会报错 —— mkdir 会在容器的临时层上把目录建出来，
+// 服务照样跑，只是每次重部署静默丢掉全部音频。所以这里记录一下这块盘是不是
+// 空的、第一次用是什么时候，让启动日志能把这种情况说出来。
+const dbExisted = fs.existsSync(DB_PATH);
+
 fs.mkdirSync(AUDIO_DIR, { recursive: true });
 
-export const db = new DatabaseSync(path.join(DATA_DIR, 'readroom.db'));
+let firstBootAt = null;
+try {
+  firstBootAt = fs.readFileSync(MARKER_PATH, 'utf8').trim();
+} catch {
+  firstBootAt = new Date().toISOString();
+  try {
+    fs.writeFileSync(MARKER_PATH, firstBootAt);
+  } catch {
+    /* 盘是只读的话就算了，不影响运行 */
+  }
+}
+
+/** 给启动日志用：这块盘上到底有没有上次留下的东西 */
+export function storageInfo() {
+  let audioCount = 0;
+  try {
+    audioCount = fs.readdirSync(AUDIO_DIR).filter((f) => f.endsWith('.mp3')).length;
+  } catch {
+    /* 读不到就算 0 */
+  }
+  return { dir: DATA_DIR, dbExisted, audioCount, firstBootAt };
+}
+
+export const db = new DatabaseSync(DB_PATH);
 
 db.exec('PRAGMA journal_mode = WAL');
 db.exec('PRAGMA foreign_keys = ON');

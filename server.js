@@ -2,7 +2,7 @@ import http from 'node:http';
 import os from 'node:os';
 import express from 'express';
 import next from 'next';
-import { db, DATA_DIR } from './server/db.js';
+import { db, DATA_DIR, storageInfo } from './server/db.js';
 import { createApiRouter } from './server/api.js';
 import { attachRealtime } from './server/realtime.js';
 import { apiKeyProblem, TTS_MODEL } from './server/tts.js';
@@ -32,7 +32,18 @@ httpServer.listen(port, '0.0.0.0', () => {
   console.log('');
   console.log('  ReadRoom 已启动');
   urls.forEach((u) => console.log(`    ${u}`));
-  console.log(`  数据目录: ${DATA_DIR}`);
+  const store = storageInfo();
+  console.log(`  数据目录: ${store.dir}`);
+  if (store.dbExisted) {
+    console.log(`            沿用上次的数据 · ${store.audioCount} 个音频 · 这块盘首次使用于 ${store.firstBootAt}`);
+  } else {
+    console.log('            这是一块空盘，数据库刚建出来');
+    if (process.env.NODE_ENV === 'production') {
+      console.log('            ⚠️  如果这不是第一次部署，说明持久卷没挂上 —— 检查卷的');
+      console.log(`            ⚠️  Mount path 是不是正好等于 DATA_DIR（现在是 ${store.dir}）。`);
+      console.log('            ⚠️  没挂上的话每次重部署，整份 transcript 都要重新 TTS 一遍。');
+    }
+  }
   console.log(`  TTS: ${TTS_MODEL}`);
 
   const problem = apiKeyProblem();
