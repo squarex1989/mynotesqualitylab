@@ -9,6 +9,13 @@
 //   node scripts/voices-from-ids.mjs --file ids.txt
 //   echo "id1,id2,id3" | node scripts/voices-from-ids.mjs
 //
+// 按语种分批时用 --lang 标注、用 --append 累加：
+//   node scripts/voices-from-ids.mjs --lang en <一批英文的 id>
+//   node scripts/voices-from-ids.mjs --lang zh --append <一批中文的 id>
+//
+// --lang 只在音色自己没报语言时用来填空；如果音色报的语言里没有你指定的那个，
+// 会警示 —— 那通常意味着挑错了（拿中文音色读英文台词发音会别扭）。
+//
 // 默认覆盖整张表；想往现有表里追加用 --append。
 // 本机连不上 api.fish.audio 时，在 Railway 的 Console 里跑（详见 README）——
 // 那里写的是挂载卷，服务会自动重读，不用重启。
@@ -28,6 +35,7 @@ if (!key) {
 }
 
 const argv = process.argv.slice(2);
+
 const has = (n) => argv.includes(`--${n}`);
 const flagValue = (n) => {
   const i = argv.indexOf(`--${n}`);
@@ -71,7 +79,12 @@ const oneLine = (s, max = 70) => {
   return t.length > max ? t.slice(0, max - 1) + '…' : t;
 };
 
-console.log(`\n要查 ${ids.length} 个 ID，逐个请求 GET /model/{id}\n`);
+const expectLang = flagValue('lang');
+console.log(
+  `\n要查 ${ids.length} 个 ID，逐个请求 GET /model/{id}` +
+    (expectLang ? `（这一批标注为 ${expectLang}）` : '') +
+    '\n'
+);
 
 const rows = [];
 const failed = [];
@@ -90,13 +103,15 @@ for (const id of ids) {
     }
     const v = await res.json();
     const gender = guessGender(v);
+    const apiLangs = Array.isArray(v.languages) ? v.languages.filter(Boolean) : [];
     const entry = {
       id,
       label: oneLine(v.title || id, 40),
       gender,
       note: oneLine(v.description || (v.tags || []).join('/') || ''),
       tags: (v.tags || []).slice(0, 8),
-      languages: v.languages || [],
+      // 音色自己报的语言优先；报空了才用 --lang 填
+      languages: apiLangs.length ? apiLangs : expectLang ? [expectLang] : [],
       uses: v.task_count ?? null,
     };
     rows.push(entry);
@@ -105,6 +120,10 @@ for (const id of ids) {
     if (v.type && v.type !== 'tts') warn.push(`type=${v.type}`);
     if (v.state && v.state !== 'trained') warn.push(`state=${v.state}`);
     if (v.visibility && v.visibility !== 'public') warn.push(`visibility=${v.visibility}`);
+    // 分组和音色实际支持的语言不一致 —— 大概率是挑错了
+    if (expectLang && apiLangs.length && !apiLangs.includes(expectLang)) {
+      warn.push(`⚠ 你归到 ${expectLang}，但它报的是 ${apiLangs.join('/')}`);
+    }
     console.log(
       `  ✓ ${entry.label.padEnd(26)} ${gender.padEnd(8)} ${(entry.languages.join('/') || '-').padEnd(10)} ${warn.length ? '⚠ ' + warn.join(' ') : ''}`
     );
