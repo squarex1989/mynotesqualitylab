@@ -1,0 +1,12 @@
+# 构建上下文里不该有的东西。没有这个文件，COPY . . 会把宿主机的
+# node_modules 盖到镜像里装好的那份上面，还会把 data/（SQLite + 音频）打进镜像。
+node_modules
+.next
+data
+.git
+.env
+.env.local
+*.tsbuildinfo
+next-env.d.ts
+.DS_Store
+README.md

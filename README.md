@@ -158,22 +158,28 @@ body 用 msgpack 打包，模型名走 `model` 请求头而不在 body 里。这
 
 ### Railway（推荐）
 
-仓库里有 `railway.json`，构建走 Nixpacks（`npm ci` → `npm run build` → `npm start`）。
+仓库里有 `railway.json`，构建走 Nixpacks（`npm ci --include=dev` → `npm run build` → `npm start`）。
 
-1. Railway 里 **New Project → Deploy from GitHub repo**，选这个仓库
+1. Railway → **New Project → Deploy from GitHub repo**，选这个仓库
 2. **Variables** 里加两个：
    - `FISH_API_KEY` = 你的 key
    - `DATA_DIR` = `/data`
-3. **必须加一块 Volume**：服务的 Settings → Volumes → Add Volume，Mount path 填 `/data`
-4. Settings → Networking → **Generate Domain**，拿到公网地址
+3. **Settings → Volumes → Add Volume**，Mount path 填 `/data`（不能省，见下）
+4. **Settings → Networking → Generate Domain**，拿到公网地址
 
-`PORT` 由 Railway 自动注入，代码直接读 `process.env.PORT`，不用管。
+`PORT` 由 Railway 自动注入，代码直接读 `process.env.PORT`，不用配。
 
-Node 版本靠 `.nvmrc`（`24`）和 `package.json` 的 `engines` 决定。**别降到 22.13 以下** ——
+Node 版本由 `.nvmrc`（`24`）和 `package.json` 的 `engines` 决定。**别降到 22.13 以下** ——
 `node:sqlite` 在那之前还需要 `--experimental-sqlite` 标志，服务会起不来。
 
-> 仓库里也有 `Dockerfile`，Railway 默认会优先用它。`railway.json` 里显式指定了
-> `NIXPACKS` 来绕开这一点 —— Dockerfile 是给 Fly / VPS 准备的，我没有 Docker 环境验证过。
+> **为什么 Dockerfile 放在 `deploy/` 而不是根目录**
+>
+> Railway 一看到根目录有 `Dockerfile` 就会用它构建，而且这个行为盖过了 `railway.json`
+> 里的 `builder: NIXPACKS`。所以 Dockerfile 挪到了 `deploy/`，让 Railway 没有东西可以
+> 自动检测，只走 Nixpacks —— 那条路是本地验证过的 `npm ci → build → start`。
+>
+> 如果你确实想让 Railway 用 Docker 构建，把 `railway.json` 改成：
+> `"builder": "DOCKERFILE", "dockerfilePath": "deploy/Dockerfile"`。
 
 ### Render
 
@@ -182,10 +188,10 @@ Node 版本靠 `.nvmrc`（`24`）和 `package.json` 的 `engines` 决定。**别
 
 ### Fly.io / 自己的 VPS
 
-用 `Dockerfile`，把一块卷挂到 `/data`：
+用 `deploy/Dockerfile`，把一块卷挂到 `/data`：
 
 ```bash
-fly launch --no-deploy
+fly launch --no-deploy --dockerfile deploy/Dockerfile
 fly volumes create readroom_data --size 5
 fly secrets set FISH_API_KEY=...
 fly deploy
