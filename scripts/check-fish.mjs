@@ -12,7 +12,7 @@
 import { encode as msgpackEncode } from '@msgpack/msgpack';
 
 const BASE = (process.env.FISH_BASE_URL || 'https://api.fish.audio').replace(/\/$/, '');
-const MODEL = process.env.FISH_MODEL || 's2.1-pro';
+const MODEL = process.env.FISH_MODEL || 's2.1-pro-free';
 const KEY = process.env.FISH_API_KEY;
 
 if (!KEY) {
@@ -143,6 +143,16 @@ bogus.ok
 if (libraryVoice) {
   const real = await tts({ text: '一二三。', format: 'mp3', reference_id: libraryVoice });
   real.ok ? ok(`音色库里的 ID 可用`, `${libraryVoice} → ${Math.round(real.bytes / 1024)}KB`) : no('音色库里的 ID 用不了', `HTTP ${real.status} ${real.error}`);
+}
+
+/* 8. 单次请求的字数上限（免费档没有公开文档）---------------------- */
+console.log('\n8) 单次请求能吃多长的文本（代码里默认切到 800 字）');
+for (const n of [500, 800, 1200]) {
+  const long = '这是一句用来测试长度上限的话。'.repeat(Math.ceil(n / 15)).slice(0, n);
+  const r = await tts({ text: long, format: 'mp3' });
+  r.ok
+    ? ok(`${n} 字`, `${Math.round(r.bytes / 1024)}KB`)
+    : no(`${n} 字被拒`, `HTTP ${r.status} ${r.error}`);
 }
 
 /* ---------------------------------------------------------------- */

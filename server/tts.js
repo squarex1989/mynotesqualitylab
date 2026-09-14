@@ -10,7 +10,8 @@ import { db, audioPath } from './db.js';
 //   POST https://api.fish.audio/v1/tts
 //     Authorization: Bearer <FISH_API_KEY>
 //     Content-Type: application/msgpack     ← 不是 JSON，body 要 msgpack 打包
-//     model: s2.1-pro                       ← 模型走请求头，不在 body 里
+//     model: s2.1-pro-free                  ← 模型走请求头。写进 body 会被
+//                                              静默忽略，然后你拿到的是默认模型
 //
 // 和之前经 OpenRouter 的那层比，原生接口多给了两样有用的东西：
 //   1. prosody.speed / volume 是真参数，语速不用塞进风格标签
@@ -18,7 +19,7 @@ import { db, audioPath } from './db.js';
 
 const BASE_URL = () => (process.env.FISH_BASE_URL || 'https://api.fish.audio').replace(/\/$/, '');
 
-export const TTS_MODEL = process.env.FISH_MODEL || 's2.1-pro';
+export const TTS_MODEL = process.env.FISH_MODEL || 's2.1-pro-free';
 const MP3_BITRATE = Number(process.env.FISH_MP3_BITRATE) || 128;
 // normal = 质量更好，balanced = 更快。朗读场景不在乎首字延迟，选质量
 const LATENCY = process.env.FISH_LATENCY || 'normal';
