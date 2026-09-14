@@ -90,22 +90,17 @@ node --env-file-if-exists=.env scripts/fetch-fish-voices.mjs --language zh --lim
 
 ### 在 Railway 的容器里跑脚本（本机连不上 fish.audio 时）
 
-有些网络环境访问不到 `api.fish.audio`。这时候最省事的办法是**在部署好的容器里跑** ——
-容器的出口走 Railway 的网络，本机只需要能连上 railway.app。
+有些网络环境访问不到 `api.fish.audio`。这时候在**部署好的容器里**跑 —— 容器的出口走
+Railway 的网络，绕开本机的限制。
 
-```bash
-npm i -g @railway/cli
-railway login
+最省事的是 Railway 控制台自带的网页终端：**Service → Console 标签**。打开就是容器内的
+shell，提示符长这样：
+
+```
+root@b29eb4f711b4:/app#
 ```
 
-在仓库目录里关联服务，然后开一个容器内的 shell：
-
-```bash
-railway link
-railway ssh
-```
-
-进去之后（工作目录就是 `/app`，环境变量 Railway 已经注入，不需要 `.env`）：
+到了这里就直接跑，环境变量 Railway 已经注入，不需要 `.env`：
 
 ```bash
 node scripts/check-fish.mjs
@@ -115,13 +110,18 @@ node scripts/check-fish.mjs
 node scripts/fetch-fish-voices.mjs --language en,zh --limit 40
 ```
 
-⚠️ **别用 `railway run`。** 它是「把 Railway 的环境变量注入到**本机**进程」，命令还是在你
-电脑上跑的 —— 网络照样不通。要在容器里跑必须用 `railway ssh`。
+> **`railway login` / `railway ssh` 是在你自己电脑上用的**，作用是「进到容器里」。
+> 如果你已经在网页 Console 里，那一步已经省掉了 —— 在容器里敲 `railway` 只会得到
+> `command not found`。
+>
+> 想用 CLI 的话是在本机：`npm i -g @railway/cli` → `railway login` → `railway link`
+> → `railway ssh`，进去之后再跑上面那两条。
+>
+> 另外**别用 `railway run`**：它只是把 Railway 的环境变量注入到**本机**进程，命令还是
+> 在你电脑上跑的，网络照样不通。
 
-在容器里跑 `fetch-fish-voices.mjs` 还有个额外好处：它写的是 `DATA_DIR`（也就是挂载卷），
-所以音色表直接落在线上环境，服务会自动读到，不用重启也不用提交进仓库。
-
-Railway 控制台里也有网页版终端（Service → 右上角菜单），效果一样。
+在容器里跑 `fetch-fish-voices.mjs` 还有个额外好处：它写的是 `DATA_DIR`（挂载卷），
+所以音色表直接落在线上环境，服务按文件 mtime 自动重读，不用重启也不用提交进仓库。
 
 ### 对着真实 API 自检
 
