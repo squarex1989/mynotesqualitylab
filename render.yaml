@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: readroom
+    runtime: node
+    plan: starter # 挂载磁盘需要付费套餐；免费层没有持久磁盘，重部署会丢音频
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/meta
+    envVars:
+      - key: NODE_VERSION
+        value: 24.15.0 # node:sqlite 在 22.13 / 23.4 之前要 --experimental-sqlite 标志
+      - key: DATA_DIR
+        value: /var/data
+      - key: TTS_CONCURRENCY
+        value: "4"
+      - key: OPENAI_API_KEY
+        sync: false # 在 Render 控制台里填，不要写进仓库
+    disk:
+      name: readroom-data
+      mountPath: /var/data
+      sizeGB: 5
