@@ -402,11 +402,10 @@ label.field {
   border-left-color: var(--ok);
 }
 
-/* ---------- 解锁声音的横幅 ---------- */
+/* ---------- 解锁声音的横幅 ----------
+   不做吸顶：钉住之后会盖住下面卡片的顶部，而且现在随手点一下页面它就自己消失了，
+   钉着的意义不大。 */
 .unlock {
-  position: sticky;
-  top: 0;
-  z-index: 40;
   background: linear-gradient(90deg, var(--accent), #e08a3c);
   color: #1b1206;
   border-radius: 10px;

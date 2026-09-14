@@ -53,7 +53,7 @@ export function StagePanel({
   const unassigned: Speaker[] = state.speakers.filter((s) => !s.deviceId);
 
   return (
-    <div className="card" style={{ position: 'sticky', top: 16 }}>
+    <div className="card">
       <h2>Curtain up</h2>
 
       {total > 0 && (
