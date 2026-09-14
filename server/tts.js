@@ -16,6 +16,10 @@ import { db, audioPath } from './db.js';
 // 和之前经 OpenRouter 的那层比，原生接口多给了两样有用的东西：
 //   1. prosody.speed / volume 是真参数，语速不用塞进风格标签
 //   2. 输出可以是 mp3，磁盘占用只有 WAV 的九分之一
+//
+// 实测（scripts/check-fish.mjs，对着真实 API）：JSON 请求体其实也被接受，
+// msgpack 不是硬要求。这里仍然照 SDK 走 msgpack —— 以后做声音克隆时
+// references 里装的是原始字节，JSON 得 base64。但 JSON 是现成的退路。
 
 const BASE_URL = () => (process.env.FISH_BASE_URL || 'https://api.fish.audio').replace(/\/$/, '');
 

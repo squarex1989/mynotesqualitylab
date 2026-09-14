@@ -130,7 +130,19 @@ node --env-file-if-exists=.env scripts/check-fish.mjs
 ```
 
 会验证：音色库字段齐全性、msgpack 请求、mp3/wav/pcm/opus 各格式、`prosody.speed`
-是否真的改变时长、`[方括号标签]` 会不会被念出来、不存在的 `reference_id` 会不会被拒。
+是否真的改变时长、`[方括号标签]` 会不会被念出来、不存在的 `reference_id` 会不会被拒、
+单次请求的字数上限。
+
+**2026-09-15 首次对着真实 API 跑通，16 项全过。** 当时确认的几件事：
+
+- 公开音色库有 **1002 个**音色，`description` / `tags` / `languages` / `samples` 都有值
+- mp3 / wav / pcm / opus **四种格式都可用**（opus 体积只有 mp3 的四成左右，以后想省磁盘可以换）
+- `prosody.speed` 确实改变时长；`[方括号标签]` 确实不会被念出来
+- 不存在的 `reference_id` 会返回 **HTTP 400** —— 配错音色会明确失败，不是静默回落到默认音色
+- 1200 字的单次请求也没被拒，所以 `MAX_TTS_CHARS` 默认 800 是安全的
+- **JSON 请求体也被接受**，msgpack 不是硬要求（我们仍照 SDK 走 msgpack，见 `server/tts.js` 注释）
+
+换模型、换输出格式、或改动 `server/tts.js` 之后值得再跑一遍。
 
 ### 不花钱地测试
 
