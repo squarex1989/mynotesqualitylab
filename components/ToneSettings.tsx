@@ -42,15 +42,18 @@ function Seg<T extends string>({
 export function ToneSettings({ settings, devices, meta, isHost, onChange }: Props) {
   const [advanced, setAdvanced] = useState(false);
 
-  // 每个场景各存一份链接，所以输入框编辑的是「当前选中场景」那一份
+  // 每个场景各存一份链接，输入框编辑的是「当前选中场景」那一份。
+  //
+  // 这里刻意不用 useState(初始值) + useEffect 去同步：那种写法有一帧延迟，
+  // 而且 effect 一旦没按预期触发，框里就会留着上一个场景的值。改成在 render
+  // 期直接派生 —— 草稿自己记住属于哪个场景，场景一变就自动失效。
   const scene = settings.ambienceKind;
   const savedUrl = (scene === 'airport' ? settings.ambienceUrlAirport : settings.ambienceUrlCafe) ?? '';
   const urlField = scene === 'airport' ? 'ambienceUrlAirport' : 'ambienceUrlCafe';
 
-  const [url, setUrl] = useState(savedUrl);
-  useEffect(() => {
-    setUrl(savedUrl);
-  }, [savedUrl]);
+  const [draft, setDraft] = useState<{ scene: string; url: string } | null>(null);
+  const url = draft?.scene === scene ? draft.url : savedUrl;
+  const setUrl = (v: string) => setDraft({ scene, url: v });
 
   const parsed = parseYouTubeId(url);
   const urlDirty = savedUrl !== url;

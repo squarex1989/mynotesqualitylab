@@ -39,7 +39,7 @@ export default function RoomPage() {
     prepareRemaining,
     currentIdx,
     activeIdxs,
-    audioUnlocked,
+    audioState,
     unlockAudio,
     ambienceHostRef,
     ambienceStatus,
@@ -110,7 +110,7 @@ export default function RoomPage() {
         </div>
       </div>
 
-      {!audioUnlocked && (
+      {audioState === 'blocked' && (
         <div className="unlock">
           <span>
             This device can&apos;t play audio yet — browsers need one interaction first. Click

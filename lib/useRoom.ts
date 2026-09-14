@@ -16,6 +16,8 @@ import type {
 
 export type Toast = { id: number; kind: 'info' | 'error' | 'success'; message: string };
 export type Phase = 'idle' | 'preparing' | 'playing';
+/** checking = 还没探测完，界面上什么都不该说 */
+export type AudioState = 'checking' | 'ready' | 'blocked';
 
 const SYNC_ROUNDS = 6;
 
@@ -47,7 +49,10 @@ export function useRoom(roomId: string) {
   const [prepareRemaining, setPrepareRemaining] = useState(0);
   const startAtLocalRef = useRef(0);
 
-  const [audioUnlocked, setAudioUnlocked] = useState(false);
+  const [audioState, setAudioState] = useState<AudioState>('checking');
+  // socket 可能比探测先连上、也可能后连上，两边都要能把结果送出去。
+  // 'checking' 期间什么都不报 —— 提前报 false 会让别人的界面先闪一下「audio blocked」。
+  const audioStateRef = useRef<AudioState>('checking');
   const [ambienceStatus, setAmbienceStatus] = useState<{
     isAmbienceDevice: boolean;
     ready: boolean;
@@ -82,7 +87,9 @@ export function useRoom(roomId: string) {
     socket.on('connect', () => {
       setConnected(true);
       void syncClock(socket, offsetRef);
-      socket.emit('device:audio', { unlocked: engineRef.current?.unlocked ?? false });
+      if (audioStateRef.current !== 'checking') {
+        socket.emit('device:audio', { unlocked: audioStateRef.current === 'ready' });
+      }
     });
     socket.on('disconnect', () => setConnected(false));
     socket.on('fatal', ({ message }: { message: string }) => setFatal(message));
@@ -153,7 +160,8 @@ export function useRoom(roomId: string) {
     let done = false;
 
     const report = (unlocked: boolean) => {
-      setAudioUnlocked(unlocked);
+      audioStateRef.current = unlocked ? 'ready' : 'blocked';
+      setAudioState(audioStateRef.current);
       socketRef.current?.emit('device:audio', { unlocked });
     };
 
@@ -166,6 +174,9 @@ export function useRoom(roomId: string) {
           done = true;
           detach();
         }
+      } else if (!fromGesture) {
+        // 探测完了，确实被浏览器拦着 —— 到这一步才该提示用户
+        report(false);
       }
       return okNow;
     };
@@ -264,7 +275,8 @@ export function useRoom(roomId: string) {
     const engine = engineRef.current;
     if (!engine) return;
     const ok = await engine.tryResume();
-    setAudioUnlocked(ok);
+    audioStateRef.current = ok ? 'ready' : 'blocked';
+    setAudioState(audioStateRef.current);
     socketRef.current?.emit('device:audio', { unlocked: ok });
     await armAmbience();
     pushToast(
@@ -332,7 +344,8 @@ export function useRoom(roomId: string) {
     prepareRemaining,
     currentIdx,
     activeIdxs,
-    audioUnlocked,
+    audioState,
+    audioUnlocked: audioState === 'ready',
     unlockAudio,
     ambienceHostRef,
     ambienceStatus,
