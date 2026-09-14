@@ -71,22 +71,43 @@ npm run dev
 
 ### 音色表
 
-Fish 没有官方的具名音色表 —— `voice` 是 [fish.audio](https://fish.audio) 音色库里的 32 位
-十六进制 `reference_id`。跑一次这个从公开库拉一份带描述、标签、语言的表：
+Fish 没有官方的具名音色表 —— `voice` 是 [fish.audio](https://fish.audio) 音色库里的
+32 位十六进制 `reference_id`。公开库有一千多个音色，都带 `description` / `tags` /
+`languages` / 试听样本。有两种方式把它们变成这个项目的音色下拉。
+
+**方式一：自己挑好，把 ID 交给脚本（推荐）**
+
+去 [fish.audio/discovery](https://fish.audio/discovery/) 按语言和标签筛、试听，挑中的
+音色页地址是 `https://fish.audio/m/<32位ID>`。然后：
 
 ```bash
-node --env-file-if-exists=.env scripts/fetch-fish-voices.mjs
+node scripts/voices-from-ids.mjs <id1> <id2> <id3>
 ```
+
+ID 之间空格、逗号、换行都行，**直接粘完整 URL 也认**（脚本会把 ID 抠出来）。名字、
+描述、标签、语言、性别全自动填好。想往现有表里追加用 `--append`，ID 多的话用
+`--file ids.txt`。
+
+耳朵挑的比任何关键词规则都准 —— 尤其你要的「像开会说话」这种，Fish 的标签体系里
+根本没有对应的类别。
+
+**方式二：批量拉 + 自动筛**
 
 ```bash
-# 只要中文音色，取 40 个
-node --env-file-if-exists=.env scripts/fetch-fish-voices.mjs --language zh --limit 40
+node scripts/fetch-fish-voices.mjs --language en,zh,ja,de,fr,es --per-bucket 3
 ```
 
-结果写进 `data/voices.fish.json`，服务会自动读（改了文件不用重启）。**跑完之后服务本身
-不再访问 api.fish.audio 的音色接口**，只用合成接口。
+按「会议风」给候选打分：对话感、自然、平和的加分；播音、旁白、宣传、戏剧化的扣分；
+动漫、角色音、游戏、唱歌的直接排除。然后按**语种 × 性别**配额挑，保证各语种各性别
+都有覆盖。加 `--explain` 能看到每个音色命中了哪些关键词，`--style any` 则关掉筛选、
+纯按热度取。
 
+规则在 `scripts/lib/voice-filter.mjs`，觉得不合口味直接改那几个词表。
+
+两种方式都写 `$DATA_DIR/voices.fish.json`，服务按文件 mtime 自动重读，**不用重启**。
 没跑过的话会用一份内置兜底表（几个公开示例音色），界面上会提示。
+
+觉得某个音色不合适，直接编辑那个 JSON 删掉一条就行。
 
 ### 在 Railway 的容器里跑脚本（本机连不上 fish.audio 时）
 
