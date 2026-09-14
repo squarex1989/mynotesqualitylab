@@ -101,13 +101,13 @@ export function createApiRouter({ broadcast }) {
   });
 
   // 内容寻址，永不失效
-  router.get('/audio/:hash.mp3', (req, res) => {
+  router.get('/audio/:hash.wav', (req, res) => {
     const hash = req.params.hash;
     if (!HASH_RE.test(hash)) return res.status(400).end();
     const file = audioPath(hash);
     if (!fs.existsSync(file)) return res.status(404).end();
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Content-Type', 'audio/wav');
     res.sendFile(file);
   });
 

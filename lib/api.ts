@@ -52,4 +52,4 @@ export const api = {
     ),
 };
 
-export const audioUrl = (hash: string) => `/api/audio/${hash}.mp3`;
+export const audioUrl = (hash: string) => `/api/audio/${hash}.wav`;

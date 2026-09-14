@@ -1,7 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
-import { parseBuffer } from 'music-metadata';
 import { db, audioPath } from './db.js';
 
 export const TTS_MODEL = process.env.TTS_MODEL || 'google/gemini-3.1-flash-tts-preview';
@@ -48,19 +47,47 @@ export function lookupAudio(hash) {
   return row;
 }
 
-async function probeDurationMs(buffer) {
-  try {
-    const meta = await parseBuffer(buffer, { mimeType: 'audio/mpeg' }, { duration: true });
-    const sec = meta?.format?.duration;
-    if (sec && Number.isFinite(sec)) return Math.round(sec * 1000);
-  } catch {
-    /* 落到下面的估算 */
-  }
-  // 兜底：按 128kbps 估。宁可估长一点，也别让排期把下一句压到前一句身上。
-  return Math.max(1000, Math.round((buffer.length / (128000 / 8)) * 1000));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Gemini TTS 只回 response_format="pcm"：16-bit 小端、裸流、没有任何文件头。
+// 浏览器的 decodeAudioData 解不了裸 PCM，所以落盘前套一个 44 字节 WAV 头 ——
+// 无损、零依赖，而且时长能按字节数精确算出来，比任何探测都准。
+const DEFAULT_RATE = 24000;
+const DEFAULT_CHANNELS = 1;
+const BYTES_PER_SAMPLE = 2;
+
+/** 从 `audio/pcm;rate=24000;channels=1` 里取出采样率和声道数 */
+function parsePcmFormat(contentType) {
+  const rate = Number(/rate=(\d+)/i.exec(contentType || '')?.[1]);
+  const channels = Number(/channels=(\d+)/i.exec(contentType || '')?.[1]);
+  return {
+    rate: Number.isFinite(rate) && rate > 0 ? rate : DEFAULT_RATE,
+    channels: Number.isFinite(channels) && channels > 0 ? channels : DEFAULT_CHANNELS,
+  };
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function wrapPcmAsWav(pcm, { rate, channels }) {
+  const byteRate = rate * channels * BYTES_PER_SAMPLE;
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0, 'ascii');
+  header.writeUInt32LE(36 + pcm.length, 4); // 整个文件减去前 8 字节
+  header.write('WAVE', 8, 'ascii');
+  header.write('fmt ', 12, 'ascii');
+  header.writeUInt32LE(16, 16); // fmt 块长度
+  header.writeUInt16LE(1, 20); // 1 = 无压缩 PCM
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(rate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(channels * BYTES_PER_SAMPLE, 32); // block align
+  header.writeUInt16LE(BYTES_PER_SAMPLE * 8, 34); // 位深
+  header.write('data', 36, 'ascii');
+  header.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([header, pcm]);
+}
+
+function pcmDurationMs(byteLength, { rate, channels }) {
+  return Math.round((byteLength / (rate * channels * BYTES_PER_SAMPLE)) * 1000);
+}
 
 async function synthesize({ voice, instructions, text }) {
   const problem = apiKeyProblem();
@@ -72,7 +99,8 @@ async function synthesize({ voice, instructions, text }) {
     model: TTS_MODEL,
     voice,
     input: instructions ? `[${instructions}] ${text}` : text,
-    response_format: 'mp3',
+    // Gemini TTS 只认 pcm —— 传 mp3 会被 400 顶回来
+    response_format: 'pcm',
   };
 
   let lastErr;
@@ -89,13 +117,14 @@ async function synthesize({ voice, instructions, text }) {
       });
 
       if (res.ok) {
+        const contentType = res.headers.get('content-type') || '';
         const buf = Buffer.from(await res.arrayBuffer());
         if (!buf.length) throw new Error('返回了 0 字节音频');
         // 出错时有些网关会回 JSON 而不是音频，content-type 能识破
-        if ((res.headers.get('content-type') || '').includes('application/json')) {
+        if (contentType.includes('application/json')) {
           throw new Error(`期望音频却收到 JSON：${buf.toString('utf8').slice(0, 200)}`);
         }
-        return buf;
+        return { pcm: buf, format: parsePcmFormat(contentType) };
       }
 
       const raw = (await res.text().catch(() => '')) || '';
@@ -152,14 +181,15 @@ export async function ensureAudio({ voice, instructions, text }) {
   if (inflight.has(hash)) return inflight.get(hash);
 
   const task = (async () => {
-    const buffer = await synthesize({ voice, instructions, text });
-    const durationMs = await probeDurationMs(buffer);
+    const { pcm, format } = await synthesize({ voice, instructions, text });
+    const durationMs = pcmDurationMs(pcm.length, format);
+    const wav = wrapPcmAsWav(pcm, format);
     const tmp = `${audioPath(hash)}.${process.pid}.tmp`;
-    await fsp.writeFile(tmp, buffer);
+    await fsp.writeFile(tmp, wav);
     await fsp.rename(tmp, audioPath(hash)); // 原子落盘，避免读到写了一半的文件
     db.prepare(
       'INSERT OR REPLACE INTO audio (hash, duration_ms, bytes, created_at) VALUES (?, ?, ?, ?)'
-    ).run(hash, durationMs, buffer.length, Date.now());
+    ).run(hash, durationMs, wav.length, Date.now());
     return { hash, durationMs, cached: false };
   })().finally(() => inflight.delete(hash));
 

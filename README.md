@@ -49,7 +49,9 @@ npm run dev
 
 ### 不花钱地测试
 
-`scripts/mock-tts.js` 是个假 TTS，返回合法的静音 mp3，时长按文本长度估算，所以排期、抢话、重叠、缓存这些逻辑都能真实验证：
+`scripts/mock-tts.js` 是个假 TTS，返回的静音 PCM 和真实接口格式一致
+（`audio/pcm;rate=24000;channels=1`），时长按文本长度估算，所以排期、抢话、重叠、
+缓存这些逻辑都能真实验证。它也一样拒绝 `response_format=mp3`，免得本地测试掩盖真实行为：
 
 ```bash
 node scripts/mock-tts.js
@@ -98,6 +100,12 @@ SRT / VTT 字幕和 `[{"speaker":"A","content":"..."}]` 这种 JSON 也认。时
 ---
 
 ## 几个设计上的选择
+
+**音频为什么存成 WAV** —— Gemini TTS 只支持 `response_format="pcm"`（传 `mp3` 会被 400 顶回来，
+尽管 OpenRouter playground 的下拉里列着 mp3）。返回的是 16-bit 小端裸流、没有任何文件头，
+浏览器的 `decodeAudioData` 解不了。所以落盘前套一个 44 字节 WAV 头 —— 无损、零依赖，
+而且时长能按字节数精确算出来（`bytes / (rate × channels × 2)`），比任何探测库都准。
+代价是 WAV 不压缩：24kHz 单声道约 **43KB/秒音频**，半小时的稿子在磁盘上是 70MB 上下。
 
 **为什么用 Web Audio 而不是 `<audio>`** —— `source.start(when)` 是采样级精度的；`<audio>.play()` 的启动抖动有几十毫秒，抢话那 1–3 秒的重叠会被抖没。
 

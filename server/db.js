@@ -74,8 +74,9 @@ CREATE INDEX IF NOT EXISTS idx_lines_room ON lines(room_id);
 CREATE INDEX IF NOT EXISTS idx_devices_room ON devices(room_id);
 `);
 
+// Gemini TTS 只回裸 PCM，落盘前套了 WAV 头（见 tts.js），所以存的是 .wav
 export function audioPath(hash) {
-  return path.join(AUDIO_DIR, `${hash}.mp3`);
+  return path.join(AUDIO_DIR, `${hash}.wav`);
 }
 
 export function audioExists(hash) {
