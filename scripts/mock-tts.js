@@ -1,85 +1,96 @@
-// 本地假 TTS，用来在不花 API 额度的前提下跑通整条链路。
-// 返回的是静音 PCM，格式和 Gemini TTS 真实返回的一模一样
-// （audio/pcm;rate=24000;channels=1，16-bit 小端裸流，没有文件头），
-// 时长按文本长度估，所以排期、抢话、重叠、缓存都能真实验证。
+// 本地假 Fish Audio，用来在不花额度的前提下跑通整条链路。
+// 它模拟真实接口的契约：/v1/tts、msgpack 请求体、model 请求头、mp3 输出。
+// 返回的是合法的静音 MP3，时长按文本长度估，所以排期、抢话、重叠、缓存都能验证。
 //
 //   node scripts/mock-tts.js            # 另开一个终端
-//   OPENROUTER_API_KEY=mock-key-for-local-testing-only \
-//     OPENROUTER_BASE_URL=http://127.0.0.1:4010/v1 npm run dev
+//   FISH_API_KEY=mock-key-for-local-testing-only \
+//     FISH_BASE_URL=http://127.0.0.1:4010 npm run dev
 
 import http from 'node:http';
+import { decode as msgpackDecode } from '@msgpack/msgpack';
 
 const PORT = Number(process.env.MOCK_TTS_PORT) || 4010;
 
-const RATE = 24000;
-const CHANNELS = 1;
-const BYTES_PER_SAMPLE = 2;
+// MPEG-1 Layer III / 128kbps / 44.1kHz / stereo —— 每帧 417 字节、1152 个采样
+const FRAME = Buffer.alloc(417);
+FRAME[0] = 0xff;
+FRAME[1] = 0xfb;
+FRAME[2] = 0x90;
+FRAME[3] = 0x00;
+const FRAME_SEC = 1152 / 44100;
 
-function silentPcm(seconds) {
-  // 全零就是静音；长度决定时长，这才是被测代码真正依赖的东西
-  const bytes = Math.max(1, Math.round(seconds * RATE * CHANNELS * BYTES_PER_SAMPLE));
-  return Buffer.alloc(bytes - (bytes % (CHANNELS * BYTES_PER_SAMPLE)));
+function silentMp3(seconds) {
+  const frames = Math.max(1, Math.round(seconds / FRAME_SEC));
+  return Buffer.concat(Array.from({ length: frames }, () => FRAME));
 }
 
 let count = 0;
 
+const fail = (res, status, message) => {
+  console.log(`[mock-fish] ${status} ${message}`);
+  res.writeHead(status, { 'content-type': 'application/json' });
+  res.end(JSON.stringify({ message }));
+};
+
 const server = http.createServer((req, res) => {
-  if (req.method !== 'POST' || !req.url.includes('/audio/speech')) {
-    res.writeHead(404).end();
-    return;
+  if (req.method !== 'POST' || !req.url.startsWith('/v1/tts')) {
+    return fail(res, 404, `没有这个端点：${req.method} ${req.url}`);
   }
+  if (!(req.headers.authorization || '').startsWith('Bearer ')) {
+    return fail(res, 401, '缺少 Authorization: Bearer <key>');
+  }
+  // 真实接口用 model 请求头选模型，body 里没有这一项 —— 少传会拿不到预期结果
+  const model = req.headers.model;
+  if (!model) return fail(res, 400, '缺少 model 请求头');
 
-  let body = '';
-  req.on('data', (c) => (body += c));
+  const chunks = [];
+  req.on('data', (c) => chunks.push(c));
   req.on('end', () => {
-    let input = '';
-    let voice = '?';
-    let format = 'pcm';
-    try {
-      const json = JSON.parse(body);
-      input = json.input || '';
-      voice = json.voice || '?';
-      format = json.response_format || 'pcm';
-    } catch {
-      /* 无所谓 */
+    const body = Buffer.concat(chunks);
+    const ct = req.headers['content-type'] || '';
+
+    let payload;
+    if (ct.includes('msgpack')) {
+      try {
+        payload = msgpackDecode(body);
+      } catch (err) {
+        return fail(res, 400, `msgpack 解不开：${err.message}`);
+      }
+    } else {
+      // 真实接口的 SDK 只发 msgpack。这里明确拒绝 JSON，
+      // 免得本地能跑、线上却不行。
+      return fail(res, 415, `content-type 必须是 application/msgpack，收到 ${ct || '(空)'}`);
     }
 
-    // 真实的 Gemini TTS 只收 pcm，mp3 会被 400 顶回来。mock 照样拒绝，
-    // 否则本地测试会掩盖这个问题。
-    if (format !== 'pcm') {
-      const msg = JSON.stringify({
-        error: { message: `Gemini TTS only supports response_format="pcm". Got "${format}".` },
-      });
-      console.log(`[mock-tts] 拒绝 response_format=${format}`);
-      res.writeHead(400, { 'content-type': 'application/json' });
-      res.end(msg);
-      return;
-    }
+    const text = String(payload?.text ?? '');
+    if (!text) return fail(res, 400, 'text 是空的');
 
-    // 方括号标签不会被读出来，估时长时要先去掉，否则和真实时长差一截
-    const spoken = input.replace(/^\s*\[[^\]]*\]\s*/, '');
-    // 中文按 4.5 字/秒，拉丁词按 0.32 秒/词，两者分开数 —— 混排的时候才不会互相减掉
+    const fmt = payload.format || 'mp3';
+    if (fmt !== 'mp3') return fail(res, 400, `这个 mock 只实现了 mp3，收到 ${fmt}`);
+
+    // 方括号标签不会被读出来，估时长时要先去掉
+    const spoken = text.replace(/^\s*\[[^\]]*\]\s*/, '');
+    const tag = /^\s*\[([^\]]*)\]/.exec(text)?.[1];
+
+    // 中文按 4.5 字/秒，拉丁词按 0.32 秒/词，两者分开数 —— 混排时才不会互相减掉
     const cjk = (spoken.match(/[一-鿿぀-ヿ]/g) || []).length;
-    const latinWords = (spoken.replace(/[一-鿿぀-ヿ]/g, ' ').match(/[A-Za-z0-9']+/g) || [])
-      .length;
-    const seconds = Math.max(1.2, cjk / 4.5 + latinWords * 0.32);
+    const latinWords = (spoken.replace(/[一-鿿぀-ヿ]/g, ' ').match(/[A-Za-z0-9']+/g) || []).length;
+    const speed = payload.prosody?.speed || 1;
+    const seconds = Math.max(1.2, (cjk / 4.5 + latinWords * 0.32) / speed);
 
     count++;
-    const tag = /^\[([^\]]*)\]/.exec(input)?.[1];
     console.log(
-      `[mock-tts] #${count} voice=${voice} ${input.length}字 -> ${seconds.toFixed(1)}s` +
+      `[mock-fish] #${count} model=${model} voice=${payload.reference_id || '(默认)'} ` +
+        `speed=${speed} ${spoken.length}字 -> ${seconds.toFixed(1)}s` +
         (tag ? ` | 标签[${tag}]` : ' | 无标签')
     );
 
-    const buf = silentPcm(seconds);
-    res.writeHead(200, {
-      'content-type': `audio/pcm;rate=${RATE};channels=${CHANNELS}`,
-      'content-length': buf.length,
-    });
+    const buf = silentMp3(seconds);
+    res.writeHead(200, { 'content-type': 'audio/mpeg', 'content-length': buf.length });
     res.end(buf);
   });
 });
 
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(`[mock-tts] http://127.0.0.1:${PORT}/v1  (给 OPENAI_BASE_URL 用)`);
+  console.log(`[mock-fish] http://127.0.0.1:${PORT}  （给 FISH_BASE_URL 用）`);
 });

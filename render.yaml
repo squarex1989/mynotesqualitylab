@@ -13,7 +13,7 @@ services:
         value: /var/data
       - key: TTS_CONCURRENCY
         value: "4"
-      - key: OPENROUTER_API_KEY
+      - key: FISH_API_KEY
         sync: false # 在 Render 控制台里填，不要写进仓库
     disk:
       name: readroom-data

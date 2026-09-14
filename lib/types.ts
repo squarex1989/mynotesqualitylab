@@ -17,12 +17,16 @@ export interface VoiceInfo {
   label: string;
   gender: 'male' | 'female' | 'neutral';
   note: string;
+  tags?: string[];
+  languages?: string[];
 }
 
 export interface Meta {
   voices: VoiceInfo[];
   dimensions: Record<DimensionKey, Dimension>;
   model: string;
+  /** 音色表还是内置兜底的（没跑过 fetch-fish-voices） */
+  fallbackVoices: boolean;
   ttsConfigured: boolean;
   ttsProblem: string | null;
 }

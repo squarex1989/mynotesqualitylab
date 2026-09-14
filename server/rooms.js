@@ -6,6 +6,7 @@ import {
   normalizeVoice,
   buildInstructions,
   labelFor,
+  speedFor,
 } from './voices.js';
 import { audioHash, lookupAudio } from './tts.js';
 
@@ -291,13 +292,25 @@ export function setRoomStatus(roomId, status) {
 
 /** 每句话当前应该是哪个音频文件（由 speaker 的音色配置决定） */
 export function lineTargets(roomId) {
-  const speakers = new Map(getSpeakers(roomId).map((s) => [s.name, s]));
+  const speakers = new Map(
+    getSpeakers(roomId).map((s) => [
+      s.name,
+      { ...s, speed: speedFor(normalizeConfig(JSON.parse(s.config))) },
+    ])
+  );
   return getLines(roomId).map((line) => {
     const sp = speakers.get(line.speaker);
     const hash = sp
-      ? audioHash({ voice: sp.voice, instructions: sp.instructions, text: line.content })
+      ? audioHash({ voice: sp.voice, instructions: sp.instructions, speed: sp.speed, text: line.content })
       : null;
-    return { ...line, hash, voice: sp?.voice, instructions: sp?.instructions, deviceId: sp?.device_id };
+    return {
+      ...line,
+      hash,
+      voice: sp?.voice,
+      instructions: sp?.instructions,
+      speed: sp?.speed,
+      deviceId: sp?.device_id,
+    };
   });
 }
 
@@ -322,7 +335,7 @@ export function roomState(roomId) {
     // 这个角色第一句话的音频（如果已经合成好），用来在界面上试听
     const first = firstLine.get(roomId, s.name);
     const sampleHash = first
-      ? audioHash({ voice: s.voice, instructions: s.instructions, text: first.content })
+      ? audioHash({ voice: s.voice, instructions: s.instructions, speed: speedFor(config), text: first.content })
       : null;
     return {
       sampleHash: sampleHash && lookupAudio(sampleHash) ? sampleHash : null,

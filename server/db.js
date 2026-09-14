@@ -74,9 +74,9 @@ CREATE INDEX IF NOT EXISTS idx_lines_room ON lines(room_id);
 CREATE INDEX IF NOT EXISTS idx_devices_room ON devices(room_id);
 `);
 
-// Gemini TTS 只回裸 PCM，落盘前套了 WAV 头（见 tts.js），所以存的是 .wav
+// Fish 原生支持 mp3 输出，直接存 mp3 —— 比 WAV 小九倍左右
 export function audioPath(hash) {
-  return path.join(AUDIO_DIR, `${hash}.wav`);
+  return path.join(AUDIO_DIR, `${hash}.mp3`);
 }
 
 export function audioExists(hash) {

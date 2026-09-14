@@ -41,7 +41,7 @@ httpServer.listen(port, '0.0.0.0', () => {
     console.log(`  ⚠️  ${problem}`);
     console.log('     可以建房间、上传 transcript、调音色，但点「合成音频」会失败。');
     console.log(`     在项目根目录的 .env 里写上真正的 key，然后重启：`);
-    console.log('       OPENROUTER_API_KEY=sk-or-v1-...');
+    console.log('       FISH_API_KEY=...');
   }
   console.log('');
 });

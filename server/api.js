@@ -2,7 +2,7 @@ import express from 'express';
 import fs from 'node:fs';
 import { audioPath } from './db.js';
 import { parseTranscript } from './parse.js';
-import { VOICES, DIMENSIONS } from './voices.js';
+import { voices, usingFallbackVoices, DIMENSIONS } from './voices.js';
 import { createRoom, getRoom, isHostToken, setTranscript, getLines, roomState } from './rooms.js';
 import { jobStatus } from './generate.js';
 import { apiKeyProblem, TTS_MODEL } from './tts.js';
@@ -34,9 +34,10 @@ export function createApiRouter({ broadcast }) {
   router.get('/meta', (_req, res) => {
     const problem = apiKeyProblem();
     res.json({
-      voices: VOICES,
+      voices: voices(),
       dimensions: DIMENSIONS,
       model: TTS_MODEL,
+      fallbackVoices: usingFallbackVoices(),
       ttsConfigured: !problem,
       ttsProblem: problem,
     });
@@ -101,13 +102,13 @@ export function createApiRouter({ broadcast }) {
   });
 
   // 内容寻址，永不失效
-  router.get('/audio/:hash.wav', (req, res) => {
+  router.get('/audio/:hash.mp3', (req, res) => {
     const hash = req.params.hash;
     if (!HASH_RE.test(hash)) return res.status(400).end();
     const file = audioPath(hash);
     if (!fs.existsSync(file)) return res.status(404).end();
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-    res.setHeader('Content-Type', 'audio/wav');
+    res.setHeader('Content-Type', 'audio/mpeg');
     res.sendFile(file);
   });
 

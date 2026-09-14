@@ -66,6 +66,7 @@ async function run(roomId, job) {
             await ensureAudio({
               voice: target.voice,
               instructions: target.instructions,
+              speed: target.speed,
               text: target.content,
             });
           } catch (err) {

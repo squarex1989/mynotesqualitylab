@@ -2,10 +2,10 @@
 
 上传一份 transcript，把里面的角色分给屋子里的每台电脑，让它们用各自的音色、语气、口音把这场对话读出来。
 
-TTS 用 Gemini 3.1 Flash TTS（经 OpenRouter）。
+TTS 用 Fish Audio S2.1-Pro，直连官方 API（`api.fish.audio`）。
 
 - **创建 / 加入 room** —— 6 位房间号，其他电脑输号进来
-- **角色设定** —— 每个 speaker 有音色（Gemini 30 种预置）+ 年龄感 / 语气 / 口音 / 语速 / 情绪 / 说话习惯，默认随机；风格标签也可以直接手写。性别由音色本身决定，不单独设
+- **角色设定** —— 每个 speaker 有音色（从 fish.audio 公开库拉，带描述和标签）+ 年龄感 / 语气 / 口音 / 语速 / 情绪 / 说话习惯，默认随机；风格标签也可以直接手写。性别由音色本身决定，不单独设
 - **设备分配** —— 一个角色对一台设备，一台设备可以拿多个角色；只有房主一台机器也能跑
 - **房间基调** —— 有序 / 混乱（定时抢话，被抢的那句同时压低音量）× 安静 / 嘈杂（指定一台设备用 YouTube 链接放咖啡馆或机场环境音）
 - **合成是显式的一步** —— 上传和改设定都不会触发 TTS，房主把所有角色确认好之后点「合成音频」才开跑
@@ -25,7 +25,7 @@ npm install
 在项目根目录建一个 `.env`（注意把下面这行换成你自己的 key，别原样粘贴）：
 
 ```
-OPENROUTER_API_KEY=sk-or-v1-...
+FISH_API_KEY=...
 ```
 
 然后：
@@ -40,12 +40,42 @@ npm run dev
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `OPENROUTER_API_KEY` | 必填 | 只在服务端使用，永远不会下发到浏览器 |
-| `TTS_MODEL` | `google/gemini-3.1-flash-tts-preview` | |
+| `FISH_API_KEY` | 必填 | 只在服务端使用，永远不会下发到浏览器 |
+| `FISH_MODEL` | `s2.1-pro` | 可选 `s1` / `s2-pro` / `s2.1-pro` |
+| `FISH_MP3_BITRATE` | `128` | 64 / 128 / 192 |
+| `FISH_LATENCY` | `normal` | `normal` 质量优先，`balanced` 更快 |
 | `PORT` | `3000` | |
 | `DATA_DIR` | `./data` | SQLite 和生成的 mp3 都在这里。部署时指向挂载磁盘 |
 | `TTS_CONCURRENCY` | `4` | 同时并发的 TTS 请求数 |
-| `OPENROUTER_BASE_URL` | — | 指向别的兼容端点，本地测试时可以指向下面的 mock |
+| `FISH_BASE_URL` | `https://api.fish.audio` | 本地测试时指向下面的 mock |
+
+### 音色表
+
+Fish 没有官方的具名音色表 —— `voice` 是 [fish.audio](https://fish.audio) 音色库里的 32 位
+十六进制 `reference_id`。跑一次这个从公开库拉一份带描述、标签、语言的表：
+
+```bash
+node --env-file-if-exists=.env scripts/fetch-fish-voices.mjs
+```
+
+```bash
+# 只要中文音色，取 40 个
+node --env-file-if-exists=.env scripts/fetch-fish-voices.mjs --language zh --limit 40
+```
+
+结果写进 `data/voices.fish.json`，服务会自动读（改了文件不用重启）。**跑完之后服务本身
+不再访问 api.fish.audio 的音色接口**，只用合成接口。
+
+没跑过的话会用一份内置兜底表（几个公开示例音色），界面上会提示。
+
+### 对着真实 API 自检
+
+```bash
+node --env-file-if-exists=.env scripts/check-fish.mjs
+```
+
+会验证：音色库字段齐全性、msgpack 请求、mp3/wav/pcm/opus 各格式、`prosody.speed`
+是否真的改变时长、`[方括号标签]` 会不会被念出来、不存在的 `reference_id` 会不会被拒。
 
 ### 不花钱地测试
 
@@ -60,7 +90,7 @@ node scripts/mock-tts.js
 另开一个终端：
 
 ```bash
-OPENROUTER_API_KEY=mock-key-for-local-testing-only OPENROUTER_BASE_URL=http://127.0.0.1:4010/v1 npm run dev
+FISH_API_KEY=mock-key-for-local-testing-only FISH_BASE_URL=http://127.0.0.1:4010 npm run dev
 ```
 
 ---
@@ -101,11 +131,14 @@ SRT / VTT 字幕和 `[{"speaker":"A","content":"..."}]` 这种 JSON 也认。时
 
 ## 几个设计上的选择
 
-**音频为什么存成 WAV** —— Gemini TTS 只支持 `response_format="pcm"`（传 `mp3` 会被 400 顶回来，
-尽管 OpenRouter playground 的下拉里列着 mp3）。返回的是 16-bit 小端裸流、没有任何文件头，
-浏览器的 `decodeAudioData` 解不了。所以落盘前套一个 44 字节 WAV 头 —— 无损、零依赖，
-而且时长能按字节数精确算出来（`bytes / (rate × channels × 2)`），比任何探测库都准。
-代价是 WAV 不压缩：24kHz 单声道约 **43KB/秒音频**，半小时的稿子在磁盘上是 70MB 上下。
+**为什么用 msgpack 而不是 JSON** —— Fish 官方 SDK 发的是 `Content-Type: application/msgpack`，
+body 用 msgpack 打包，模型名走 `model` 请求头而不在 body 里。这么做是因为 `references`
+（声音克隆的参考音频）里装的是原始字节。我们只用 `reference_id`、理论上 JSON 也够，
+但既然 SDK 走 msgpack 就照着来 —— 这条路是确定能用的。
+
+**语速走参数、其它走标签** —— Fish 的风格控制没有独立参数，靠 `[方括号标签]` 拼在正文
+前面（标签不会被读出来）。但语速是例外：`prosody.speed` 是真参数（0.5–2.0），比写
+"speaking slowly" 让模型自己体会可靠，所以语速那一项不进标签。
 
 **为什么用 Web Audio 而不是 `<audio>`** —— `source.start(when)` 是采样级精度的；`<audio>.play()` 的启动抖动有几十毫秒，抢话那 1–3 秒的重叠会被抖没。
 
@@ -129,7 +162,7 @@ SRT / VTT 字幕和 `[{"speaker":"A","content":"..."}]` 这种 JSON 也认。时
 
 1. Railway 里 **New Project → Deploy from GitHub repo**，选这个仓库
 2. **Variables** 里加两个：
-   - `OPENROUTER_API_KEY` = 你的 key
+   - `FISH_API_KEY` = 你的 key
    - `DATA_DIR` = `/data`
 3. **必须加一块 Volume**：服务的 Settings → Volumes → Add Volume，Mount path 填 `/data`
 4. Settings → Networking → **Generate Domain**，拿到公网地址
@@ -144,7 +177,7 @@ Node 版本靠 `.nvmrc`（`24`）和 `package.json` 的 `engines` 决定。**别
 
 ### Render
 
-`render.yaml` 直接可用 —— 建一个 Blueprint 服务，在控制台填 `OPENROUTER_API_KEY`。
+`render.yaml` 直接可用 —— 建一个 Blueprint 服务，在控制台填 `FISH_API_KEY`。
 磁盘挂在 `/var/data`，`DATA_DIR` 已经指过去了。注意免费层没有持久磁盘。
 
 ### Fly.io / 自己的 VPS
@@ -154,7 +187,7 @@ Node 版本靠 `.nvmrc`（`24`）和 `package.json` 的 `engines` 决定。**别
 ```bash
 fly launch --no-deploy
 fly volumes create readroom_data --size 5
-fly secrets set OPENROUTER_API_KEY=sk-or-v1-...
+fly secrets set FISH_API_KEY=...
 fly deploy
 ```
 
@@ -182,7 +215,7 @@ server/
   db.js                node:sqlite 建表；音频文件路径
   parse.js             transcript 解析（纯文本 / 时间戳 / SRT / JSON）
   voices.js            音色目录、各维度选项、风格标签拼装、随机配置
-  tts.js               OpenRouter 调用、内容寻址缓存、时长探测、限流重试
+  tts.js               Fish API 调用（msgpack）、内容寻址缓存、时长探测、限流重试
   generate.js          房间级的批量合成任务（限并发、推进度、跑完再扫一遍）
   schedule.js          把台词排成带绝对偏移的时间线（有序 / 抢话 / 压音量）
   rooms.js             房间、角色、设备、分配、设置的读写
@@ -190,5 +223,8 @@ server/
   realtime.js          Socket.IO：实时状态、房主操作、开播握手
 lib/                   前端：socket hook、Web Audio 引擎、时钟同步、YouTube 环境音
 components/            上传器、角色卡、设备面板、基调设置、台词、开场面板
-scripts/mock-tts.js    本地假 TTS
+scripts/
+  mock-tts.js          本地假 Fish（msgpack + mp3），不花额度跑通链路
+  fetch-fish-voices.mjs  从 fish.audio 公开库拉音色表
+  check-fish.mjs       对着真实 API 自检
 ```

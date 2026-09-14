@@ -1,47 +1,75 @@
-// Gemini 3.1 Flash TTS（经 OpenRouter）的 30 个预置音色，以及
-// 「年龄感 / 语气 / 口音 / 语速 / 情绪 / 说话习惯」怎么被拼成风格标签。
+// Fish Audio S2.1-Pro 的音色表，以及「年龄感 / 语气 / 口音 / 语速 / 情绪 /
+// 说话习惯」怎么被拼成风格标签。
 //
-// 和 OpenAI 不同，这个接口没有独立的 instructions 参数 —— 风格靠一段
-// [方括号标签] 拼在台词前面，方括号里可以写任意自然语言，标签本身不会被读出来。
-// 所以这里每个选项给的是一个短语，最后用逗号连成一行。
+// Fish 的风格控制没有独立参数 —— 靠一段 [方括号标签] 拼在台词前面，
+// 方括号里可以写任意自然语言，标签本身不会被读出来。所以这里每个选项给的是
+// 一个短语，最后用逗号连成一行。语速是例外：Fish 有真正的 prosody.speed 参数，
+// 比塞进标签可靠，所以它不进标签（tag 留空）。
 //
-// 这里没有「性别」：性别由 voice 本身决定（下面每个音色都标着男声/女声），
-// 再在标签里写一句 "a male speaker" 只会和音色打架。
+// 这里没有「性别」：性别由 voice 本身决定，再在标签里写一句 "a male speaker"
+// 只会和音色打架。
 
-export const VOICES = [
-  { id: 'Zephyr', label: 'Zephyr', gender: 'female', note: '明亮' },
-  { id: 'Puck', label: 'Puck', gender: 'male', note: '轻快上扬' },
-  { id: 'Charon', label: 'Charon', gender: 'male', note: '沉稳、讲解感' },
-  { id: 'Kore', label: 'Kore', gender: 'female', note: '坚定' },
-  { id: 'Fenrir', label: 'Fenrir', gender: 'male', note: '易激动' },
-  { id: 'Leda', label: 'Leda', gender: 'female', note: '年轻' },
-  { id: 'Orus', label: 'Orus', gender: 'male', note: '坚定' },
-  { id: 'Aoede', label: 'Aoede', gender: 'female', note: '轻盈' },
-  { id: 'Callirrhoe', label: 'Callirrhoe', gender: 'female', note: '随和' },
-  { id: 'Autonoe', label: 'Autonoe', gender: 'female', note: '明亮' },
-  { id: 'Enceladus', label: 'Enceladus', gender: 'male', note: '气声' },
-  { id: 'Iapetus', label: 'Iapetus', gender: 'male', note: '清晰' },
-  { id: 'Umbriel', label: 'Umbriel', gender: 'male', note: '随和' },
-  { id: 'Algieba', label: 'Algieba', gender: 'male', note: '顺滑' },
-  { id: 'Despina', label: 'Despina', gender: 'female', note: '顺滑' },
-  { id: 'Erinome', label: 'Erinome', gender: 'female', note: '清晰' },
-  { id: 'Algenib', label: 'Algenib', gender: 'male', note: '沙哑' },
-  { id: 'Rasalgethi', label: 'Rasalgethi', gender: 'male', note: '讲解感' },
-  { id: 'Laomedeia', label: 'Laomedeia', gender: 'female', note: '轻快上扬' },
-  { id: 'Achernar', label: 'Achernar', gender: 'female', note: '柔软' },
-  { id: 'Alnilam', label: 'Alnilam', gender: 'male', note: '坚定' },
-  { id: 'Schedar', label: 'Schedar', gender: 'male', note: '平稳' },
-  { id: 'Gacrux', label: 'Gacrux', gender: 'female', note: '成熟' },
-  { id: 'Pulcherrima', label: 'Pulcherrima', gender: 'female', note: '有推进感' },
-  { id: 'Achird', label: 'Achird', gender: 'male', note: '友好' },
-  { id: 'Zubenelgenubi', label: 'Zubenelgenubi', gender: 'male', note: '随意' },
-  { id: 'Vindemiatrix', label: 'Vindemiatrix', gender: 'female', note: '温和' },
-  { id: 'Sadachbia', label: 'Sadachbia', gender: 'male', note: '活泼' },
-  { id: 'Sadaltager', label: 'Sadaltager', gender: 'male', note: '博学感' },
-  { id: 'Sulafat', label: 'Sulafat', gender: 'female', note: '温暖' },
+import fs from 'node:fs';
+import path from 'node:path';
+import { DATA_DIR } from './db.js';
+
+const VOICES_FILE = path.join(DATA_DIR, 'voices.fish.json');
+
+// Fish 没有官方的具名音色表 —— voice 是 fish.audio 音色库里的 32 位十六进制
+// reference_id。想要一份带描述和标签的表，跑一次：
+//     node --env-file-if-exists=.env scripts/fetch-fish-voices.mjs
+// 它会从公开库拉回来写进 data/voices.fish.json。
+//
+// 下面这几个是从 Fish / OpenRouter 的公开文档里找到的公开音色，只是兜底，
+// 让项目在还没拉音色表时也能跑起来。我验证过它们经 API 不会被拒（不存在的
+// ID 会返回 400），但没法确认各自听起来什么样。
+const FALLBACK_VOICES = [
+  { id: '', label: '默认音色', gender: 'neutral', note: '不指定 reference_id，用模型自带的声音' },
+  { id: '9a9cf47702da476aa4629e2506d4a857', label: 'Energetic Male', gender: 'male', note: 'Fish 官方 quickstart 示例' },
+  { id: 'ca3007f96ae7499ab87d27ea3599956a', label: 'E-Girl', gender: 'female', note: 'Fish 官方 quickstart 示例' },
+  { id: 'b347db033a6549378b48d00acb0d06cd', label: 'Demo A', gender: 'neutral', note: '公开文档示例音色' },
+  { id: '933563129e564b19a115bedd57b7406a', label: 'Demo B', gender: 'neutral', note: 'fish.audio 官网示例音色' },
+  { id: '7f92f8afb8ec43bf81429cc1c9199cb1', label: 'Demo C', gender: 'neutral', note: '社区教程引用的公开音色' },
 ];
 
-export const VOICE_IDS = VOICES.map((v) => v.id);
+let cache = null;
+let cacheMtime = 0;
+
+/** 当前可用音色表。文件改了会自动重新读，不用重启。 */
+export function voices() {
+  try {
+    const stat = fs.statSync(VOICES_FILE);
+    if (cache && stat.mtimeMs === cacheMtime) return cache;
+
+    const parsed = JSON.parse(fs.readFileSync(VOICES_FILE, 'utf8'));
+    const clean = (Array.isArray(parsed) ? parsed : parsed.voices || [])
+      .filter((v) => v && typeof v.id === 'string' && v.label)
+      .map((v) => ({
+        id: v.id.trim(),
+        label: String(v.label),
+        gender: ['male', 'female', 'neutral'].includes(v.gender) ? v.gender : 'neutral',
+        note: String(v.note || ''),
+        tags: Array.isArray(v.tags) ? v.tags : [],
+        languages: Array.isArray(v.languages) ? v.languages : [],
+      }));
+
+    if (clean.length) {
+      cache = clean;
+      cacheMtime = stat.mtimeMs;
+      return cache;
+    }
+    console.warn(`[voices] ${VOICES_FILE} 里没有有效音色，用内置兜底表`);
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      console.warn(`[voices] 读取 ${VOICES_FILE} 失败：${err.message}，用内置兜底表`);
+    }
+  }
+  return FALLBACK_VOICES;
+}
+
+export function usingFallbackVoices() {
+  return !fs.existsSync(VOICES_FILE);
+}
 
 // 每个维度：value 给机器，label 给 UI，tag 拼进方括号（空字符串 = 这一项不进标签）
 export const DIMENSIONS = {
@@ -88,13 +116,14 @@ export const DIMENSIONS = {
   },
   pace: {
     label: '语速',
-    // 这个接口没有 speed 参数，语速只能写进标签
+    // Fish 有真正的 prosody.speed 参数（0.5–2.0），比塞进标签可靠，
+    // 所以这一项不进标签，改为映射成 speed 数值
     options: [
-      { value: 'very-slow', label: '很慢', tag: 'speaking very slowly, with long pauses' },
-      { value: 'slow', label: '偏慢', tag: 'unhurried' },
-      { value: 'normal', label: '正常', tag: '' },
-      { value: 'fast', label: '偏快', tag: 'brisk' },
-      { value: 'very-fast', label: '很快', tag: 'rapid-fire' },
+      { value: 'very-slow', label: '很慢', tag: '', speed: 0.7 },
+      { value: 'slow', label: '偏慢', tag: '', speed: 0.85 },
+      { value: 'normal', label: '正常', tag: '', speed: 1.0 },
+      { value: 'fast', label: '偏快', tag: '', speed: 1.18 },
+      { value: 'very-fast', label: '很快', tag: '', speed: 1.35 },
     ],
   },
   emotion: {
@@ -139,14 +168,21 @@ export function buildInstructions(config) {
     .join(', ');
 }
 
+/** 这套配置对应的 prosody.speed（Fish 允许 0.5–2.0） */
+export function speedFor(config) {
+  const s = optionFor('pace', config?.pace)?.speed;
+  return Number.isFinite(s) ? s : 1;
+}
+
 function pick(arr, rng) {
   return arr[Math.floor(rng() * arr.length)];
 }
 
 /** 随机生成一个角色配置。优先挑还没被占用的音色，免得一屋子人是同一个声音。 */
 export function randomSpeakerConfig({ avoidVoices = [], rng = Math.random } = {}) {
-  const fresh = VOICES.filter((v) => !avoidVoices.includes(v.id));
-  const voice = pick(fresh.length ? fresh : VOICES, rng).id;
+  const all = voices();
+  const fresh = all.filter((v) => !avoidVoices.includes(v.id));
+  const voice = pick(fresh.length ? fresh : all, rng).id;
 
   const config = {
     age: pick(DIMENSIONS.age.options, rng).value,
@@ -176,5 +212,6 @@ export function normalizeConfig(input = {}) {
 }
 
 export function normalizeVoice(voice) {
-  return VOICE_IDS.includes(voice) ? voice : VOICES[0].id;
+  const all = voices();
+  return all.some((v) => v.id === voice) ? voice : all[0].id;
 }

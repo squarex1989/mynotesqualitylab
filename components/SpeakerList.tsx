@@ -53,6 +53,16 @@ export function SpeakerList({
         {meta && <>{meta.voices.length} 个音色可选。</>}性别由音色本身决定，不用单独设。
         调完这里再去右侧点「合成音频」—— 改动不会自动触发 TTS，
         而且只有真正变过的角色需要重跑。
+        {meta?.fallbackVoices && (
+          <>
+            <br />
+            <span style={{ color: 'var(--accent)' }}>
+              ⚠ 现在用的是内置兜底音色表（只有几个示例）。跑一次{' '}
+              <code>node --env-file-if-exists=.env scripts/fetch-fish-voices.mjs</code>{' '}
+              从 fish.audio 公开库拉一份带描述的真表。
+            </span>
+          </>
+        )}
       </p>
 
       {speakers.map((s) => (
@@ -144,7 +154,9 @@ function SpeakerCard({
               >
                 {meta?.voices.map((v) => (
                   <option key={v.id} value={v.id}>
-                    {v.label} · {v.note}
+                    {[v.label, v.languages?.length ? v.languages.join('/') : '', v.note]
+                      .filter(Boolean)
+                      .join(' · ')}
                   </option>
                 ))}
               </select>
@@ -223,9 +235,10 @@ function SpeakerCard({
                   )}
                 </div>
                 <p className="tiny muted" style={{ margin: 0 }}>
-                  这段文字会以 <code>[方括号]</code> 的形式拼在台词前面发给{' '}
-                  {meta?.model ?? 'Gemini TTS'} —— 括号里可以写任意自然语言，
+                  这段文字会以 <code>[方括号]</code> 的形式拼在台词前面发给 Fish{' '}
+                  {meta?.model ?? 's2.1-pro'} —— 括号里可以写任意自然语言，
                   比如「疲惫地，几乎在叹气」。标签本身不会被读出来。
+                  语速不在这里，它走单独的 <code>prosody.speed</code> 参数。
                 </p>
               </div>
             )}
