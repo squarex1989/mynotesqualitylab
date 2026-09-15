@@ -222,6 +222,7 @@ e = new AudioEngine();
 await e.tryResume();
 const d = audioDiagnostics(e, 1);
 console.log('   (d) 正常解锁          →', d);
+t('(d) 带版本号（拿到读数第一件事是确认代码版本）', d.startsWith('diag='), d);
 t('(d) state=running ever=yes', d.includes('state=running') && d.includes('ever=yes'), d);
 t('(d) 没有任何错误字段', !d.includes('rejects=') && !d.includes('timeouts=') && !d.includes('last='), d);
 t('(d) 认出是 iPhone 上的 Chrome', d.includes('ua=iOS/Chrome-iOS/18.5'), d);

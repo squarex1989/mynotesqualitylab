@@ -9,6 +9,10 @@ const PREFETCH_AHEAD = 8; // 窗口之外再预解码几条，滚动向前
 // 给足一点 —— 等一秒再报「被拦住了」无所谓，等不够就会把成功误判成失败。
 const SETTLE_MS = 1000;
 
+// 诊断行的版本号。每次改动这行的字段就 +1 —— 手机上拿到一条读数时，第一件事
+// 是确认它来自哪一版代码，否则会拿着旧版的输出去推断新版的行为。
+const DIAG_VERSION = 3;
+
 type Tracked = ScheduleItem & { _scheduled?: boolean; _done?: boolean };
 
 /**
@@ -33,6 +37,7 @@ export function reportedAudioState(engine: AudioEngine): 'ready' | 'blocked' {
 export function audioDiagnostics(engine: AudioEngine, gestures: number) {
   const d = engine.diag;
   const bits = [
+    `diag=${DIAG_VERSION}`,
     `state=${engine.ctxState}`,
     `ever=${engine.everUnlocked ? 'yes' : 'no'}`,
     `tries=${d.attempts}`,

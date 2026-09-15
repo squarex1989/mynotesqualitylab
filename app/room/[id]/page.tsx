@@ -22,6 +22,7 @@ export default function RoomPage() {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [copied, setCopied] = useState(false);
   const [compareOpen, setCompareOpen] = useState(false);
+  const [diagCopied, setDiagCopied] = useState(false);
 
   const room = useRoom(roomId);
   const {
@@ -56,6 +57,16 @@ export default function RoomPage() {
 
   // 服务端眼里的「我自己」。诊断行要用它对照本机算出来的状态。
   const meRow = state?.devices.find((d) => d.id === deviceId) ?? null;
+
+  // 手机上没法看控制台，这一行要能一键复制出来
+  const diagLine =
+    `${audioDiag}  local=${audioState}` +
+    `  server=${meRow ? (meRow.audioReady ? 'ready' : 'blocked') : 'no-row'}` +
+    `  socket=${connected ? 'up' : 'down'}` +
+    `  id=${deviceId ? deviceId.slice(0, 6) : '?'}` +
+    `  rows=${state ? state.devices.filter((d) => d.id === deviceId).length : 0}/${
+      state ? state.devices.length : 0
+    }`;
 
   const speakingNames = useMemo(() => {
     const names = new Set<string>();
@@ -134,7 +145,20 @@ export default function RoomPage() {
 
       {audioDiag && (
         <p className="tiny muted" style={{ fontFamily: 'var(--mono)', margin: '0 0 10px' }}>
-          audio on this device — {audioDiag}
+          <button
+            className="small ghost"
+            style={{ marginRight: 8 }}
+            onClick={() => {
+              void navigator.clipboard
+                ?.writeText(diagLine)
+                .then(() => setDiagCopied(true))
+                .catch(() => {});
+              setTimeout(() => setDiagCopied(false), 1800);
+            }}
+          >
+            {diagCopied ? 'copied' : 'copy audio info'}
+          </button>
+          {audioDiag}
           {'  '}
           {/* 设备自己算出来的状态 vs 服务端记下来的状态。两者不一致就说明
               问题在上报链路，而不在声音解锁 —— 这一条直接把可能性劈成两半。 */}
