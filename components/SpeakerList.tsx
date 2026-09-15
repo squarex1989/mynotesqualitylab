@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 import { audioUrl } from '@/lib/api';
 import type { Device, DimensionKey, Meta, Speaker } from '@/lib/types';
 
@@ -50,17 +50,17 @@ export function SpeakerList({
         )}
       </div>
       <p className="sub">
-        {meta && <>{meta.voices.length} voices available. </>}Gender comes from the voice itself,
-        so there is no separate setting. Tune these, then hit <strong>Synthesize audio</strong> on
-        the right — edits never trigger TTS on their own, and only speakers that actually changed
-        get re-synthesized.
+        {meta && <>{meta.voices.length} voices available. </>}Character comes from the voice itself
+        — pick one per speaker and adjust the pace if needed. Then hit{' '}
+        <strong>Synthesize audio</strong> on the right; edits never trigger TTS on their own, and
+        only speakers that actually changed get re-synthesized.
         {meta?.fallbackVoices && (
           <>
             <br />
             <span style={{ color: 'var(--accent)' }}>
               ⚠ Using the built-in fallback voice list (just a few samples). Run{' '}
-              <code>node --env-file-if-exists=.env scripts/fetch-fish-voices.mjs</code>{' '}
-              to pull the real catalogue from the fish.audio public library.
+              <code>scripts/voices-from-ids.mjs</code> or <code>scripts/fetch-fish-voices.mjs</code>{' '}
+              to pull a real catalogue from fish.audio.
             </span>
           </>
         )}
@@ -105,9 +105,6 @@ function SpeakerCard({
   onAssign: Props['onAssign'];
   onPlaySample: (hash: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState<string | null>(null);
-
   const dimKeys = meta ? (Object.keys(meta.dimensions) as DimensionKey[]) : [];
   const assigned = devices.find((d) => d.id === speaker.deviceId);
   const voiceInfo = meta?.voices.find((v) => v.id === speaker.voice);
@@ -136,12 +133,11 @@ function SpeakerCard({
 
       <div className="row tiny muted" style={{ marginTop: 6, gap: 6 }}>
         <span className="pill">{voiceInfo?.label ?? speaker.voice}</span>
-        <span className="pill">{voiceInfo?.note || ''}</span>
-        {(['age', 'tone', 'accent', 'pace'] as DimensionKey[]).map((k) => (
-          <span key={k} className="pill">
-            {speaker.configLabels[k]}
-          </span>
-        ))}
+        {voiceInfo?.languages?.length ? (
+          <span className="pill">{voiceInfo.languages.join('/')}</span>
+        ) : null}
+        <span className="pill">{speaker.configLabels.pace}</span>
+        {voiceInfo?.note ? <span className="pill">{voiceInfo.note}</span> : null}
       </div>
 
       {isHost ? (
@@ -196,54 +192,6 @@ function SpeakerCard({
             </label>
           </div>
 
-          <div style={{ marginTop: 10 }}>
-            <button className="small ghost" onClick={() => setOpen((v) => !v)}>
-              {open ? 'Hide' : 'View / edit'} style tag {speaker.custom ? '· edited' : ''}
-            </button>
-
-            {open && (
-              <div className="stack" style={{ marginTop: 8 }}>
-                <textarea
-                  rows={3}
-                  value={draft ?? speaker.instructions}
-                  onChange={(e) => setDraft(e.target.value)}
-                  style={{ fontFamily: 'var(--mono)', fontSize: 12 }}
-                />
-                <div className="row">
-                  <button
-                    className="small primary"
-                    disabled={draft === null || draft === speaker.instructions}
-                    onClick={() => {
-                      onUpdate(speaker.name, { instructions: draft });
-                      setDraft(null);
-                    }}
-                  >
-                    Save
-                  </button>
-                  <button
-                    className="small ghost"
-                    onClick={() => {
-                      setDraft(null);
-                      onUpdate(speaker.name, { resetInstructions: true });
-                    }}
-                  >
-                    Rebuild from dropdowns
-                  </button>
-                  {draft !== null && (
-                    <button className="small ghost" onClick={() => setDraft(null)}>
-                      Revert
-                    </button>
-                  )}
-                </div>
-                <p className="tiny muted" style={{ margin: 0 }}>
-                  This text is prepended to the line in <code>[brackets]</code> before it goes to
-                  Fish Audio. Anything in plain language works — e.g. &ldquo;tired, almost
-                  sighing&rdquo;. The tag itself is never read aloud. Pace is not here: it uses the
-                  separate <code>prosody.speed</code> parameter.
-                </p>
-              </div>
-            )}
-          </div>
         </>
       ) : (
         <p className="tiny muted" style={{ margin: '8px 0 0' }}>

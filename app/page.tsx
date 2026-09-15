@@ -3,7 +3,9 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
-import { getDeviceName, recentRooms, rememberRoom, setDeviceName, setHostToken } from '@/lib/identity';
+import { getDeviceName, rememberRoom, setDeviceName, setHostToken } from '@/lib/identity';
+import { clampTitle, titleWeight, TITLE_MAX_WEIGHT } from '@/lib/roomName';
+import { RoomList } from '@/components/RoomList';
 
 export default function Home() {
   const router = useRouter();
@@ -11,12 +13,12 @@ export default function Home() {
   const [name, setName] = useState('');
   const [busy, setBusy] = useState<'create' | 'join' | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [recent, setRecent] = useState<string[]>([]);
+  const [roomName, setRoomName] = useState('');
+  const [listKey, setListKey] = useState(0);
   const [ttsProblem, setTtsProblem] = useState<string | null>(null);
 
   useEffect(() => {
     setName(getDeviceName());
-    setRecent(recentRooms());
     api.meta().then((m) => setTtsProblem(m.ttsProblem)).catch(() => {});
   }, []);
 
@@ -29,9 +31,10 @@ export default function Home() {
     setBusy('create');
     setError(null);
     try {
-      const { id, hostToken } = await api.createRoom();
+      const { id, hostToken } = await api.createRoom(roomName.trim() || undefined);
       setHostToken(id, hostToken);
       rememberRoom(id);
+      setListKey((k) => k + 1);
       router.push(`/room/${id}`);
     } catch (err: any) {
       setError(err.message);
@@ -56,7 +59,7 @@ export default function Home() {
 
   return (
     <div className="shell" style={{ maxWidth: 640, paddingTop: 64 }}>
-      <h1 style={{ fontSize: 26, margin: '0 0 6px' }}>ReadRoom</h1>
+      <h1 style={{ fontSize: 26, margin: '0 0 6px' }}>Transcript Reader</h1>
       <p className="muted" style={{ marginTop: 0 }}>
         Upload a transcript, hand each speaker to a different computer, and let them read the conversation out loud in their own voices.
       </p>
@@ -90,6 +93,23 @@ export default function Home() {
       <div className="card">
         <h2>Create a room</h2>
         <p className="sub">You'll be the host: upload the transcript, tune the voices, hit start.</p>
+        <label className="field" style={{ marginBottom: 12 }}>
+          <span className="spread">
+            <span>Room name (optional)</span>
+            <span className={titleWeight(roomName) > TITLE_MAX_WEIGHT * 0.9 ? '' : 'muted'}>
+              {titleWeight(roomName)}/{TITLE_MAX_WEIGHT}
+            </span>
+          </span>
+          <input
+            value={roomName}
+            onChange={(e) => setRoomName(clampTitle(e.target.value))}
+            onKeyDown={(e) => e.key === 'Enter' && create()}
+            placeholder="e.g. Weekly growth retro"
+          />
+        </label>
+        <p className="sub" style={{ marginTop: -6 }}>
+          Up to 20 CJK characters or 40 letters. You can rename it later.
+        </p>
         <button className="primary big" onClick={create} disabled={busy !== null}>
           {busy === 'create' ? 'Creating…' : 'Create room'}
         </button>
@@ -118,17 +138,9 @@ export default function Home() {
           </button>
         </div>
 
-        {recent.length > 0 && (
-          <div className="row" style={{ marginTop: 14 }}>
-            <span className="tiny muted">Recent:</span>
-            {recent.map((r) => (
-              <button key={r} className="small ghost" onClick={() => join(r)}>
-                {r}
-              </button>
-            ))}
-          </div>
-        )}
       </div>
+
+      <RoomList refreshKey={listKey} />
 
       {error && (
         <div className="card" style={{ borderColor: 'rgba(239,111,111,.4)', color: 'var(--err)' }}>

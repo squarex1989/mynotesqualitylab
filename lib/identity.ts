@@ -49,6 +49,32 @@ export function setHostToken(roomId: string, token: string) {
   localStorage.setItem(hostKey(roomId), token);
 }
 
+/** 我创建的房间 = localStorage 里存着 host token 的那些 */
+export function createdRoomIds(): string[] {
+  if (typeof window === 'undefined') return [];
+  const prefix = 'readroom:host:';
+  const ids: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k?.startsWith(prefix)) ids.push(k.slice(prefix.length));
+  }
+  return ids;
+}
+
+export function forgetRoom(roomId: string) {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(hostKey(roomId));
+  const raw = localStorage.getItem('readroom:recent');
+  if (raw) {
+    try {
+      const list: string[] = JSON.parse(raw);
+      localStorage.setItem('readroom:recent', JSON.stringify(list.filter((r) => r !== roomId)));
+    } catch {
+      /* 坏数据就算了 */
+    }
+  }
+}
+
 export function rememberRoom(roomId: string) {
   if (typeof window === 'undefined') return;
   const raw = localStorage.getItem('readroom:recent');

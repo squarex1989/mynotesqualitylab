@@ -1,4 +1,4 @@
-import type { Meta, ParsePreview, RoomState, Progress, Line } from './types';
+import type { Meta, ParsePreview, RoomState, Progress, Line, RoomSummary } from './types';
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
@@ -21,6 +21,26 @@ export const api = {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ title }),
+    }),
+
+  roomSummaries: (ids: string[]) =>
+    req<{ rooms: RoomSummary[] }>('/api/rooms/summaries', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    }),
+
+  renameRoom: (id: string, hostToken: string, title: string) =>
+    req<{ ok: true; title: string | null }>(`/api/rooms/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', 'x-host-token': hostToken },
+      body: JSON.stringify({ title }),
+    }),
+
+  deleteRoom: (id: string, hostToken: string) =>
+    req<{ ok: true }>(`/api/rooms/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: { 'x-host-token': hostToken },
     }),
 
   getRoom: (id: string) =>

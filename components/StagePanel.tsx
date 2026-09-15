@@ -113,7 +113,7 @@ export function StagePanel({
               {done && (
                 <>
                   <button className="primary big" style={{ width: '100%' }} onClick={onStart}>
-                    Start room
+                    Start reading
                   </button>
                   <p className="tiny muted" style={{ margin: 0 }}>
                     Clips are stored by model + voice + style + text, so the next run reuses them

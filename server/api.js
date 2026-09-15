@@ -3,7 +3,18 @@ import fs from 'node:fs';
 import { audioPath } from './db.js';
 import { parseTranscript } from './parse.js';
 import { voices, usingFallbackVoices, DIMENSIONS } from './voices.js';
-import { createRoom, getRoom, isHostToken, setTranscript, getLines, roomState } from './rooms.js';
+import {
+  createRoom,
+  getRoom,
+  isHostToken,
+  setTranscript,
+  getLines,
+  roomState,
+  renameRoom,
+  deleteRoom,
+  roomSummaries,
+  TITLE_MAX_WEIGHT,
+} from './rooms.js';
 import { jobStatus } from './generate.js';
 import { apiKeyProblem, TTS_MODELS, DEFAULT_TTS_MODEL } from './tts.js';
 
@@ -39,6 +50,7 @@ export function createApiRouter({ broadcast }) {
       models: TTS_MODELS,
       defaultModel: DEFAULT_TTS_MODEL,
       fallbackVoices: usingFallbackVoices(),
+      titleMaxWeight: TITLE_MAX_WEIGHT,
       ttsConfigured: !problem,
       ttsProblem: problem,
     });
@@ -47,6 +59,24 @@ export function createApiRouter({ broadcast }) {
   router.post('/rooms', (req, res) => {
     const { id, hostToken } = createRoom({ title: req.body?.title });
     res.json({ id, hostToken });
+  });
+
+  // 首页那个「我创建的房间」列表用的。房间号本身就是凭证，所以不另做鉴权 ——
+  // 调用方得先知道 ID 才问得出来。
+  router.post('/rooms/summaries', (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.slice(0, 200) : [];
+    res.json({ rooms: roomSummaries(ids) });
+  });
+
+  router.patch('/rooms/:id', requireRoom, requireHost, (req, res) => {
+    const title = renameRoom(req.room.id, req.body?.title);
+    broadcast(req.room.id);
+    res.json({ ok: true, title });
+  });
+
+  router.delete('/rooms/:id', requireRoom, requireHost, (req, res) => {
+    deleteRoom(req.room.id);
+    res.json({ ok: true });
   });
 
   router.get('/rooms/:id', requireRoom, (req, res) => {

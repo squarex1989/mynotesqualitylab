@@ -13,6 +13,34 @@ import { audioHash, lookupAudio, normalizeModel, DEFAULT_TTS_MODEL } from './tts
 // 去掉 0/O/1/I 这些看错就加不进房间的字符
 const ID_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
+// 房间名长度：最多 20 个汉字 / 40 个字母。按「全角算 2、半角算 1」折算，上限 40。
+// 前端 lib/roomName.ts 里有一份一模一样的实现（服务端是 .js、前端是 .ts，
+// 没法直接共用），改规则时两边都要动。
+export const TITLE_MAX_WEIGHT = 40;
+
+export function titleWeight(s) {
+  let w = 0;
+  for (const ch of String(s || '')) {
+    // CJK、假名、全角标点都算 2
+    w += /[\u1100-\u115F\u2E80-\uA4CF\uA960-\uA97F\uAC00-\uD7A3\uF900-\uFAFF\uFE10-\uFE19\uFE30-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6]/.test(ch)
+      ? 2
+      : 1;
+  }
+  return w;
+}
+
+/** 规整房间名：去首尾空白、压缩空格、按权重截断。空名返回 null。 */
+export function normalizeTitle(raw) {
+  const t = String(raw ?? '').replace(/\s+/g, ' ').trim();
+  if (!t) return null;
+  let out = '';
+  for (const ch of t) {
+    if (titleWeight(out + ch) > TITLE_MAX_WEIGHT) break;
+    out += ch;
+  }
+  return out || null;
+}
+
 function makeRoomId() {
   for (let attempt = 0; attempt < 50; attempt++) {
     let id = '';
@@ -35,7 +63,7 @@ export function createRoom({ title } = {}) {
     id,
     hostToken,
     Date.now(),
-    title || null,
+    normalizeTitle(title),
     AMBIENCE_DEFAULTS.cafe,
     AMBIENCE_DEFAULTS.airport
   );
@@ -269,7 +297,7 @@ const SETTING_COLUMNS = {
     check: (v) => Math.max(3000, Math.min(120000, Number(v) || 20000)),
   },
   duckGain: { col: 'duck_gain', check: (v) => Math.max(0, Math.min(1, Number(v))) },
-  title: { col: 'title', check: (v) => (v ? String(v).slice(0, 80) : null) },
+  title: { col: 'title', check: (v) => normalizeTitle(v) },
 };
 
 export function updateRoomSettings(roomId, patch) {
@@ -293,6 +321,48 @@ export function updateRoomSettings(roomId, patch) {
       stuck.forEach((s, i) => assignSpeaker(roomId, s.name, others[i % others.length].id));
     }
   }
+}
+
+/** 给房间改名。返回规整后的名字（空名会被存成 null，界面上显示房间号）。 */
+export function renameRoom(roomId, title) {
+  const clean = normalizeTitle(title);
+  db.prepare('UPDATE rooms SET title = ? WHERE id = ?').run(clean, roomId);
+  return clean;
+}
+
+/**
+ * 删掉一个房间。lines / speakers / devices 靠外键 ON DELETE CASCADE 一起走。
+ *
+ * 音频文件故意不删：它们是按内容寻址的、跨房间共享，别的房间可能正用着同一份。
+ * 留着也只是缓存，下次同样的文本 + 音色还能直接命中。
+ */
+export function deleteRoom(roomId) {
+  db.prepare('DELETE FROM rooms WHERE id = ?').run(roomId);
+}
+
+/** 首页那个列表要的轻量信息，不拉台词也不拉角色详情 */
+export function roomSummaries(ids) {
+  const out = [];
+  for (const raw of ids) {
+    const room = getRoom(raw);
+    if (!room) continue;
+    const { n: lineCount } = db
+      .prepare('SELECT COUNT(*) AS n FROM lines WHERE room_id = ?')
+      .get(room.id);
+    const { n: speakerCount } = db
+      .prepare('SELECT COUNT(*) AS n FROM speakers WHERE room_id = ?')
+      .get(room.id);
+    out.push({
+      id: room.id,
+      title: room.title,
+      locked: Boolean(room.locked),
+      status: room.status,
+      createdAt: room.created_at,
+      lineCount,
+      speakerCount,
+    });
+  }
+  return out;
 }
 
 /** 当前场景用哪个链接 */

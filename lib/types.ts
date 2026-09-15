@@ -27,6 +27,16 @@ export interface TtsModelInfo {
   note: string;
 }
 
+export interface RoomSummary {
+  id: string;
+  title: string | null;
+  locked: boolean;
+  status: 'idle' | 'playing';
+  createdAt: number;
+  lineCount: number;
+  speakerCount: number;
+}
+
 export interface Meta {
   voices: VoiceInfo[];
   dimensions: Record<DimensionKey, Dimension>;
@@ -34,6 +44,7 @@ export interface Meta {
   defaultModel: string;
   /** Voice list is still the built-in fallback (fetch-fish-voices hasn't been run) */
   fallbackVoices: boolean;
+  titleMaxWeight: number;
   ttsConfigured: boolean;
   ttsProblem: string | null;
 }

@@ -84,8 +84,11 @@ export default function RoomPage() {
   return (
     <div className="shell">
       <div className="topbar">
-        <div>
-          <div className="tiny muted">Room code</div>
+        <div style={{ minWidth: 0 }}>
+          <div className="tiny muted">
+            {state?.title ? state.title : 'Room code'}
+            {copied && <span style={{ marginLeft: 8 }}>copied</span>}
+          </div>
           <button
             className="ghost"
             onClick={copy}
@@ -94,7 +97,6 @@ export default function RoomPage() {
           >
             <span className="roomcode">{roomId}</span>
           </button>
-          {copied && <span className="tiny muted" style={{ marginLeft: 8 }}>copied</span>}
         </div>
 
         <div className="row" style={{ marginLeft: 'auto' }}>
