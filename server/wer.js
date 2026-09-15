@@ -136,6 +136,16 @@ const MAX_CELLS = 40e6;
  * 一次精确的 Levenshtein 对齐，回溯出每一步操作。
  * 替换算 1 次（不是删+插 2 次）—— 这是 WER 的标准定义。
  *
+ * 代价相同的对齐往往有很多条，**平局时选命中最多的那条**。这不是锦上添花：
+ *
+ *   ref: quicksilver launch um        hyp: quick silver launch
+ *
+ * 「3 次替换」和「替换 + 插入 + 命中 + 删除」代价都是 3。选前者会得出
+ * launch→Silver、um→launch 这种毫无意义的配对，于是专有名词报成
+ * 「Quicksilver → Quick」（看着像被截断）、一个权重 1 的实词和一个权重 0.1 的
+ * 语气词互换了位置、说话人矩阵也跟着错。总 WER 不受影响（代价一样），但 S/D/I
+ * 的分布、加权错误率和所有从对齐上读出来的东西都依赖挑对这条路径。
+ *
  * @returns {{ ops: {t:'hit'|'sub'|'del'|'ins', ri:number, hi:number}[], S,D,I,hits }}
  */
 function alignExact(ref, hyp, rOff = 0, hOff = 0) {
@@ -144,8 +154,11 @@ function alignExact(ref, hyp, rOff = 0, hOff = 0) {
 
   // 方向矩阵：0=命中/替换（对角）1=删除（少了 ref 的词）2=插入（多了 hyp 的词）
   const dir = new Uint8Array((n + 1) * (m + 1));
+  // 每格存两个量：最小代价，以及取到该代价时路径上的命中数（用来打破平局）
   let prev = new Int32Array(m + 1);
+  let prevHits = new Int32Array(m + 1);
   let cur = new Int32Array(m + 1);
+  let curHits = new Int32Array(m + 1);
 
   for (let j = 0; j <= m; j++) {
     prev[j] = j;
@@ -155,27 +168,39 @@ function alignExact(ref, hyp, rOff = 0, hOff = 0) {
 
   for (let i = 1; i <= n; i++) {
     cur[0] = i;
+    curHits[0] = 0;
     dir[i * (m + 1)] = 1;
     for (let j = 1; j <= m; j++) {
-      const sub = prev[j - 1] + (ref[i - 1] === hyp[j - 1] ? 0 : 1);
-      const del = prev[j] + 1;
-      const ins = cur[j - 1] + 1;
-      let best = sub;
+      const match = ref[i - 1] === hyp[j - 1];
+      // 代价升序、命中降序：代价一样就选命中多的
+      let best = prev[j - 1] + (match ? 0 : 1);
+      let bestHits = prevHits[j - 1] + (match ? 1 : 0);
       let d = 0;
-      if (del < best) {
+
+      const del = prev[j] + 1;
+      if (del < best || (del === best && prevHits[j] > bestHits)) {
         best = del;
+        bestHits = prevHits[j];
         d = 1;
       }
-      if (ins < best) {
+
+      const ins = cur[j - 1] + 1;
+      if (ins < best || (ins === best && curHits[j - 1] > bestHits)) {
         best = ins;
+        bestHits = curHits[j - 1];
         d = 2;
       }
+
       cur[j] = best;
+      curHits[j] = bestHits;
       dir[i * (m + 1) + j] = d;
     }
-    const swap = prev;
+    let swap = prev;
     prev = cur;
     cur = swap;
+    swap = prevHits;
+    prevHits = curHits;
+    curHits = swap;
   }
 
   const ops = [];

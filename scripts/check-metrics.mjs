@@ -231,6 +231,19 @@ t('中文按字切', analyze('张三: 这个方案我有意见。').tokens.lengt
   `${analyze('张三: 这个方案我有意见。').tokens.length}`);
 t('时间戳被剥掉', analyze('00:01:23 Alice: one two').tokens.join(' ') === 'one two',
   analyze('00:01:23 Alice: one two').tokens.join(' '));
+// 平局时必须选命中多的那条路径。这里「3 次替换」和「插入+替换+命中+删除」
+// 代价都是 3，选错会得出 launch→Silver、um→launch 这种无意义配对。
+const tie = alignTexts('Alice: the Quicksilver launch. Um, are we ready?',
+  'Speaker 1: the Quick Silver launch. Are we ready?');
+t('平局选命中多的：S1 D1 I1 而不是 S3',
+  tie.S === 1 && tie.D === 1 && tie.I === 1 && tie.hits === 5,
+  `S${tie.S} D${tie.D} I${tie.I} hits${tie.hits}`);
+t('launch 对上了 launch（没被配给 Silver）',
+  tie.ops.some((o) => o.t === 'hit' && tie.ref.raw[o.ri] === 'launch'),
+  tie.ops.map((o) => `${o.t}:${o.ri >= 0 ? tie.ref.raw[o.ri] : '-'}→${o.hi >= 0 ? tie.hyp.raw[o.hi] : '-'}`).join(' '));
+t('um 记为删除（权重 0.1），不是替换',
+  tie.ops.some((o) => o.t === 'del' && tie.ref.raw[o.ri] === 'Um'));
+
 const al = alignTexts('Alice: a b c', 'Bob: a x c');
 t('对齐操作序列可读', al.ops.map((o) => o.t).join(',') === 'hit,sub,hit',
   al.ops.map((o) => o.t).join(','));
