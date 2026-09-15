@@ -230,6 +230,19 @@ t('(d) 带上触摸点数和屏幕尺寸（UA 能被改写，这两个不能）'
   d.includes('touch5') && d.includes('393x852'), d);
 t('(d) WebKit 没有 userActivation → n/a 本身也是信息', d.includes('active=n/a'), d);
 
+console.log('\n9a) 解锁成功后要清掉上次的错误');
+gestureAllowed = false;
+e = new AudioEngine();
+await e.tryResume();
+t('无手势失败时记下了错误', audioDiagnostics(e, 0).includes('last='));
+gestureAllowed = true;
+await e.tryResume();
+const healed = audioDiagnostics(e, 1);
+console.log('   先失败后成功        →', healed);
+t('★ 成功后不再带 last=（否则「一切正常」看着像出了问题）',
+  !healed.includes('last='), healed);
+t('但历史计数保留（rejects 仍在）', healed.includes('rejects=1'), healed);
+
 console.log('\n9b) 「请求桌面版网站」会把 UA 改成 Macintosh，不能因此认成 Mac');
 Object.defineProperty(globalThis, 'navigator', {
   configurable: true,

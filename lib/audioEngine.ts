@@ -232,6 +232,9 @@ export class AudioEngine {
     }
 
     this.ever = true;
+    // 成功了就把上次的错误清掉。手机上第一次无手势探测必定被拒，那条
+    // NotAllowedError 留着会让「一切正常」看起来像出了问题。
+    this.diag.lastError = '';
     // 播一段无声，彻底解锁 iOS/Safari
     try {
       const src = ctx.createBufferSource();

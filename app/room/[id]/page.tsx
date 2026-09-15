@@ -58,15 +58,27 @@ export default function RoomPage() {
   // 服务端眼里的「我自己」。诊断行要用它对照本机算出来的状态。
   const meRow = state?.devices.find((d) => d.id === deviceId) ?? null;
 
+  const myRows = state ? state.devices.filter((d) => d.id === deviceId).length : 0;
+
+  /**
+   * 诊断行只在有异常时出现。
+   *
+   * 一切正常时它是噪音；但出问题时（尤其在手机上，看不了控制台）它是唯一能
+   * 把「设备端状态」和「服务端记下来的状态」对上的东西 —— 所以留着，只是平时藏起来。
+   */
+  const audioAnomaly =
+    audioState === 'blocked' ||
+    (state !== null && !connected) ||
+    (audioState === 'ready' && (meRow ? !meRow.audioReady : state !== null)) ||
+    myRows > 1;
+
   // 手机上没法看控制台，这一行要能一键复制出来
   const diagLine =
     `${audioDiag}  local=${audioState}` +
     `  server=${meRow ? (meRow.audioReady ? 'ready' : 'blocked') : 'no-row'}` +
     `  socket=${connected ? 'up' : 'down'}` +
     `  id=${deviceId ? deviceId.slice(0, 6) : '?'}` +
-    `  rows=${state ? state.devices.filter((d) => d.id === deviceId).length : 0}/${
-      state ? state.devices.length : 0
-    }`;
+    `  rows=${myRows}/${state ? state.devices.length : 0}`;
 
   const speakingNames = useMemo(() => {
     const names = new Set<string>();
@@ -143,7 +155,7 @@ export default function RoomPage() {
         </div>
       )}
 
-      {audioDiag && (
+      {audioDiag && audioAnomaly && (
         <p className="tiny muted" style={{ fontFamily: 'var(--mono)', margin: '0 0 10px' }}>
           <button
             className="small ghost"
@@ -158,15 +170,7 @@ export default function RoomPage() {
           >
             {diagCopied ? 'copied' : 'copy audio info'}
           </button>
-          {audioDiag}
-          {'  '}
-          {/* 设备自己算出来的状态 vs 服务端记下来的状态。两者不一致就说明
-              问题在上报链路，而不在声音解锁 —— 这一条直接把可能性劈成两半。 */}
-          local={audioState} server=
-          {meRow ? (meRow.audioReady ? 'ready' : 'blocked') : 'no-row'} socket=
-          {connected ? 'up' : 'down'} id={deviceId ? deviceId.slice(0, 6) : '?'} rows=
-          {state ? state.devices.filter((d) => d.id === deviceId).length : 0}/
-          {state ? state.devices.length : 0}
+          {diagLine}
         </p>
       )}
 
