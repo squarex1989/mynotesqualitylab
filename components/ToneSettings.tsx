@@ -56,12 +56,10 @@ export function ToneSettings({ settings, devices, meta, isHost, onChange }: Prop
   const parsed = parseYouTubeId(url);
   const urlDirty = savedUrl !== url;
   const models = meta?.models ?? [];
-  const activeModel = models.find((m) => m.id === settings.ttsModel);
 
   return (
     <div className="card">
       <h2>Room settings</h2>
-      <p className="sub">These decide whether the room sounds like a meeting or an argument.</p>
 
       <div className="stack" style={{ gap: 16 }}>
         <div>
@@ -77,11 +75,12 @@ export function ToneSettings({ settings, devices, meta, isHost, onChange }: Prop
               onChange={(v) => onChange({ orderMode: v })}
             />
           </div>
-          <p className="tiny muted" style={{ margin: '4px 0 0' }}>
-            {settings.orderMode === 'ordered'
-              ? 'One line finishes, a short pause, then the next one starts.'
-              : 'Someone cuts in on a timer: the next line starts 1–3s early while the interrupted one ducks.'}
-          </p>
+          {settings.orderMode === 'chaotic' && (
+            <p className="tiny muted" style={{ margin: '4px 0 0' }}>
+              Someone cuts in on a timer: the next line starts 1–3s early while the interrupted one
+              ducks.
+            </p>
+          )}
 
           {/* Gap always applies; the two interruption knobs only exist in chaotic mode */}
           <div className="dims" style={{ marginTop: 10 }}>
@@ -238,13 +237,6 @@ export function ToneSettings({ settings, devices, meta, isHost, onChange }: Prop
                 onChange={(v) => onChange({ ttsModel: v })}
               />
             </div>
-            <p className="tiny muted" style={{ margin: '4px 0 0' }}>
-              {activeModel?.note}
-            </p>
-            <p className="tiny" style={{ margin: '4px 0 0', color: 'var(--accent)' }}>
-              The model is part of the audio cache key, so switching invalidates every clip in this
-              room and you&apos;ll need to synthesize again.
-            </p>
           </div>
         )}
 

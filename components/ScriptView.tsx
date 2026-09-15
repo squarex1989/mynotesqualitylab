@@ -26,11 +26,6 @@ export function ScriptView({ lines, progress, schedule, activeIdxs, currentIdx, 
     <div className="card">
       <div className="spread" style={{ marginBottom: 10 }}>
         <h2>Script ({lines.length} lines)</h2>
-        {progress && progress.ready < progress.total && (
-          <span className="tiny muted">
-            green dot = synthesized · {progress.ready}/{progress.total}
-          </span>
-        )}
       </div>
 
       <div className="script" ref={boxRef}>

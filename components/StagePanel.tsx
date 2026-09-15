@@ -104,7 +104,7 @@ export function StagePanel({
                     {generating
                       ? 'You can keep tuning while this runs — it rescans afterwards and picks up anything you changed.'
                       : isRegen
-                        ? 'Speaker settings changed. Only the speakers that actually changed get re-synthesized; the rest stay cached.'
+                        ? null
                         : 'Settle on the voices first — every change means re-synthesizing that speaker.'}
                   </p>
                 </>

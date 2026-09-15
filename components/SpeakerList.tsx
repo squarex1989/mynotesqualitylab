@@ -60,23 +60,13 @@ export function SpeakerList({
           </button>
         )}
       </div>
-      <p className="sub">
-        {meta && <>{meta.voices.length} voices available. </>}Character comes from the voice itself
-        — pick one per speaker, adjust the pace, and use volume to fake how far each person sits
-        from the mic. Then hit{' '}
-        <strong>Synthesize audio</strong> on the right; edits never trigger TTS on their own, and
-        only speakers that actually changed get re-synthesized.
-        {meta?.fallbackVoices && (
-          <>
-            <br />
-            <span style={{ color: 'var(--accent)' }}>
-              ⚠ Using the built-in fallback voice list (just a few samples). Run{' '}
-              <code>scripts/voices-from-ids.mjs</code> or <code>scripts/fetch-fish-voices.mjs</code>{' '}
-              to pull a real catalogue from fish.audio.
-            </span>
-          </>
-        )}
-      </p>
+      {meta?.fallbackVoices && (
+        <p className="sub" style={{ color: 'var(--accent)' }}>
+          ⚠ Using the built-in fallback voice list (just a few samples). Run{' '}
+          <code>scripts/voices-from-ids.mjs</code> or <code>scripts/fetch-fish-voices.mjs</code> to
+          pull a real catalogue from fish.audio.
+        </p>
+      )}
 
       {speakers.map((s) => (
         <SpeakerCard

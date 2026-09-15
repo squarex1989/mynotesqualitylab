@@ -39,11 +39,6 @@ export function DevicePanel({
           </button>
         )}
       </div>
-      <p className="sub">
-        One device can hold several speakers. A single machine works fine too — it just reads
-        everyone.
-      </p>
-
       <div className="stack">
         {devices.map((d) => {
           const mine = speakers.filter((s) => s.deviceId === d.id);
