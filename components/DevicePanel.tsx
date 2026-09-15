@@ -12,6 +12,9 @@ interface Props {
   onAutoAssign: () => void;
   onRename: (name: string) => void;
   onSetAmbienceDevice: (deviceId: string | null) => void;
+  onSetCaptureDevice: (deviceId: string | null) => void;
+  onOpenCompare: () => void;
+  canCompare: boolean;
 }
 
 export function DevicePanel({
@@ -23,6 +26,9 @@ export function DevicePanel({
   onAutoAssign,
   onRename,
   onSetAmbienceDevice,
+  onSetCaptureDevice,
+  onOpenCompare,
+  canCompare,
 }: Props) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -43,6 +49,7 @@ export function DevicePanel({
         {devices.map((d) => {
           const mine = speakers.filter((s) => s.deviceId === d.id);
           const isAmbience = settings.ambienceDevice === d.id;
+          const isCapture = settings.captureDevice === d.id;
           return (
             <div
               key={d.id}
@@ -56,10 +63,15 @@ export function DevicePanel({
                   {d.id === myDeviceId && <span className="pill on">this device</span>}
                   {d.isHost && <span className="pill">host</span>}
                   {isAmbience && <span className="pill on">ambience</span>}
+                  {isCapture && <span className="pill on">capture</span>}
                 </div>
-                <span className={`pill ${d.audioReady ? 'ok' : 'err'}`}>
-                  {d.audioReady ? 'audio ready' : 'audio blocked'}
-                </span>
+                {isCapture ? (
+                  <span className="pill">listens only</span>
+                ) : (
+                  <span className={`pill ${d.audioReady ? 'ok' : 'err'}`}>
+                    {d.audioReady ? 'audio ready' : 'audio blocked'}
+                  </span>
+                )}
               </div>
 
               <div className="row tiny muted" style={{ marginTop: 8, gap: 6 }}>
@@ -113,12 +125,27 @@ export function DevicePanel({
                     </button>
                   ))}
 
-                {isHost && settings.noiseMode === 'noisy' && (
+                {isHost && settings.noiseMode === 'noisy' && !isCapture && (
                   <button
                     className="small ghost"
                     onClick={() => onSetAmbienceDevice(isAmbience ? null : d.id)}
                   >
                     {isAmbience ? 'Stop being ambience source' : 'Use as ambience source'}
+                  </button>
+                )}
+
+                {isHost && !isAmbience && (
+                  <button
+                    className="small ghost"
+                    onClick={() => onSetCaptureDevice(isCapture ? null : d.id)}
+                  >
+                    {isCapture ? 'Stop being capture device' : 'Use as capture device'}
+                  </button>
+                )}
+
+                {isCapture && canCompare && (
+                  <button className="small primary" onClick={onOpenCompare}>
+                    Compare
                   </button>
                 )}
               </div>

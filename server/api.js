@@ -17,6 +17,12 @@ import {
 } from './rooms.js';
 import { jobStatus } from './generate.js';
 import { apiKeyProblem, TTS_MODELS, DEFAULT_TTS_MODEL } from './tts.js';
+import {
+  PRODUCTS,
+  DIMENSIONS as JUDGE_DIMENSIONS,
+  JUDGES,
+  apiKeyProblem as judgeKeyProblem,
+} from './judge.js';
 
 const HASH_RE = /^[a-f0-9]{32}$/;
 
@@ -53,6 +59,12 @@ export function createApiRouter({ broadcast }) {
       titleMaxWeight: TITLE_MAX_WEIGHT,
       ttsConfigured: !problem,
       ttsProblem: problem,
+      compare: {
+        products: PRODUCTS,
+        dimensions: JUDGE_DIMENSIONS.map((d) => ({ key: d.key, label: d.label })),
+        judges: JUDGES.map((j) => ({ id: j.id, label: j.label, model: j.model })),
+        problem: judgeKeyProblem(),
+      },
     });
   });
 

@@ -18,7 +18,12 @@ import {
   lineTargets,
   generationProgress,
   ambienceUrlFor,
+  getComparisons,
+  putComparisonTranscript,
+  setComparisonState,
+  referenceTranscript,
 } from './rooms.js';
+import { gradeTranscript, isProduct } from './judge.js';
 import { ensureGeneration, jobStatus, genEvents } from './generate.js';
 import { buildSchedule } from './schedule.js';
 import { lookupAudio } from './tts.js';
@@ -39,6 +44,7 @@ function snapshot(roomId) {
     ...d,
     audioReady: audioReady.get(`${roomId}:${d.id}`) === true,
   }));
+  state.comparisons = getComparisons(roomId);
   return { state, progress: jobStatus(roomId) };
 }
 
@@ -112,6 +118,61 @@ export function attachRealtime(httpServer) {
       audioReady.set(`${roomId}:${deviceId}`, Boolean(unlocked));
       broadcast(roomId);
     });
+
+    // ---------------- 转录对比（收音设备本机 + 房主）----------------
+    const canCompare = () => {
+      if (socket.data.isHost) return true;
+      return getRoom(roomId)?.capture_device === deviceId;
+    };
+
+    const compareOnly = (handler) => async (payload) => {
+      if (!canCompare()) {
+        socket.emit('toast', {
+          kind: 'error',
+          message: 'Only the host or the capture device can run comparisons',
+        });
+        return;
+      }
+      try {
+        await handler(payload || {});
+      } catch (err) {
+        socket.emit('toast', { kind: 'error', message: err.message || String(err) });
+      }
+    };
+
+    socket.on(
+      'compare:put',
+      compareOnly(({ product, transcript }) => {
+        if (!isProduct(product)) throw new Error('Unknown product');
+        putComparisonTranscript(roomId, product, transcript);
+        broadcast(roomId);
+      })
+    );
+
+    socket.on(
+      'compare:score',
+      compareOnly(async ({ product }) => {
+        if (!isProduct(product)) throw new Error('Unknown product');
+
+        const reference = referenceTranscript(roomId);
+        if (!reference.trim()) throw new Error('This room has no transcript to compare against');
+
+        const row = getComparisons(roomId).find((c) => c.product === product);
+        if (!row?.transcript?.trim()) throw new Error('Paste that product\'s transcript first');
+        if (row.state === 'scoring') return; // 已经在跑了
+
+        setComparisonState(roomId, product, 'scoring');
+        broadcast(roomId);
+
+        try {
+          const result = await gradeTranscript({ reference, candidate: row.transcript });
+          setComparisonState(roomId, product, 'done', { result });
+        } catch (err) {
+          setComparisonState(roomId, product, 'failed', { error: err.message || String(err) });
+        }
+        broadcast(roomId);
+      })
+    );
 
     // ---------------- 以下都是房主专属 ----------------
     const hostOnly = (handler) => (payload, ack) => {

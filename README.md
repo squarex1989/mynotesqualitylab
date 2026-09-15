@@ -7,6 +7,7 @@ TTS 用 Fish Audio S2.1-Pro Free，直连官方 API（`api.fish.audio`）。
 - **创建 / 加入 room** —— 6 位房间号，其他电脑输号进来。房间可以起名（最多 20 个汉字 / 40 个字母），首页能看到自己建过的房间、改名、删除
 - **角色设定** —— 每个 speaker 四项：音色（从 fish.audio 挑）、语速（Normal / Fast）、音量（模拟离收音设备的远近，默认 100%，可降到 20%，0 为静音）、由哪台设备读。角色之间的差异靠换音色，不靠给同一个音色贴风格标签
 - **设备分配** —— 一个角色对一台设备，一台设备可以拿多个角色；只有房主一台机器也能跑
+- **收音设备** —— 可以把某台设备指定为收音设备：它不播任何声音、也不承担 speaker，专门用来在旁边跑会议记录产品。它的界面上有「Compare」入口，能把 My Notes / Granola / Otter 三家录出来的转录贴进去，交给两个裁判模型按五个维度打分
 - **房间基调** —— 有序 / 混乱（定时抢话，被抢的那句同时压低音量）× 安静 / 嘈杂（指定一台设备用 YouTube 链接放咖啡馆或机场环境音，两个场景各有默认链接，音量默认 10%）
 - **合成是显式的一步** —— 上传和改设定都不会触发 TTS，房主把所有角色确认好之后点「合成音频」才开跑
 - **界面是英文的** —— 代码注释和这份 README 还是中文
@@ -50,6 +51,10 @@ npm run dev
 | `DATA_DIR` | `./data` | SQLite 和生成的 mp3 都在这里。部署时指向挂载磁盘 |
 | `TTS_CONCURRENCY` | `4` | 同时并发的 TTS 请求数 |
 | `FISH_BASE_URL` | `https://api.fish.audio` | 本地测试时指向下面的 mock |
+| `OPENROUTER_API_KEY` | 用对比功能才需要 | 转录打分的两个裁判模型走 OpenRouter |
+| `JUDGE_MODEL_GPT` | `openai/gpt-5.6-sol` | 想换裁判时覆盖 |
+| `JUDGE_MODEL_CLAUDE` | `anthropic/claude-opus-5` | 同上 |
+| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | 本地测试时指向假裁判 |
 
 ### 模型
 
@@ -108,6 +113,41 @@ node scripts/fetch-fish-voices.mjs --language en,zh,ja,de,fr,es --per-bucket 3
 没跑过的话会用一份内置兜底表（几个公开示例音色），界面上会提示。
 
 觉得某个音色不合适，直接编辑那个 JSON 删掉一条就行。
+
+### 转录对比（收音设备）
+
+房主在「Devices」里把某台设备标成 **capture device** 之后：
+
+- 那台设备从朗读分配里退出 —— 不播声、不承担 speaker，手动分配也会被服务端拒掉
+  （它的职责是听，自己出声会污染录音）
+- 它的设备卡上出现 **Compare** 按钮（房主也能看到这个入口）
+
+点开之后是 My Notes / Granola / Otter 三栏，每栏可以选文件或直接粘贴该产品录出来的
+转录，然后逐个 Score。**房间里那份原始 transcript 是唯一真值**，三家各自和它比对。
+
+两个裁判模型并排跑，都开最高推理档（`reasoning.effort: high`）：
+
+| 裁判 | slug |
+| --- | --- |
+| GPT-5.6 Sol (high) | `openai/gpt-5.6-sol` |
+| Claude Opus 5 (high) | `anthropic/claude-opus-5` |
+
+五个维度各打 0-100，**不做平均** —— 两个模型分歧大本身就是信息，说明那个维度不好判：
+
+1. 逐字正确率
+2. 关键内容有没有整段丢失
+3. 有没有被录成相反的意思（「我不知道」→「我知道」）
+4. 人名和专有名词（「Claude」→「Cloud」）
+5. Speaker 区分是否正确且稳定（`Speaker 1` 能不能稳定对应同一个人）
+
+每个维度除了分数还会给出具体依据，底下是每个裁判各自的简报。「Copy all results」
+把三家的分数和简报一起复制成 Markdown。
+
+打分结果存进房间数据库，房间里所有人刷新后看到同一份，不会各算一份。改了某个产品的
+转录文本，那一栏的旧结果会自动清空 —— 免得分数和文本对不上。
+
+用的是 OpenRouter 的 **structured outputs**（JSON Schema strict）而不是让模型自由输出
+再解析 —— 评分一旦格式跑偏，解析逻辑会越写越脏，而且出错时很难发现。
 
 ### 在 Railway 的容器里跑脚本（本机连不上 fish.audio 时）
 

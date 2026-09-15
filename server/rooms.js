@@ -251,6 +251,10 @@ export function renameDevice(roomId, deviceId, name) {
 }
 
 export function assignSpeaker(roomId, speaker, deviceId) {
+  // 收音设备的职责是听，自己出声会污染录音 —— 拒绝把角色分给它
+  if (deviceId && getRoom(roomId)?.capture_device === deviceId) {
+    throw new Error('The capture device cannot read lines');
+  }
   db.prepare('UPDATE speakers SET device_id = ? WHERE room_id = ? AND name = ?').run(
     deviceId || null,
     roomId,
@@ -270,18 +274,24 @@ export function autoAssignDevices(roomId, { force = false } = {}) {
   const speakers = getSpeakers(roomId);
   const onlineIds = new Set(pool.map((d) => d.id));
 
-  // 环境音设备如果还有别的机器可用，就别让它兼职念台词
-  const nonAmbience = pool.filter((d) => d.id !== room.ambience_device);
-  const targets = nonAmbience.length ? nonAmbience : pool;
+  // 环境音设备和收音设备如果还有别的机器可用，就别让它们兼职念台词。
+  // 收音设备尤其不能 —— 它的职责是听，自己出声会污染录音。
+  const free = pool.filter((d) => d.id !== room.ambience_device && d.id !== room.capture_device);
+  const targets = free.length ? free : pool.filter((d) => d.id !== room.capture_device);
+  if (!targets.length) return; // 只剩收音设备，那就谁都不分
 
   // 打散一下，避免总是同一台机器拿到第一个角色
   const order = [...targets].sort(() => Math.random() - 0.5);
 
   let cursor = 0;
   for (const s of speakers) {
-    if (!force && s.device_id && onlineIds.has(s.device_id) && s.device_id !== room.ambience_device) {
-      continue;
-    }
+    const keep =
+      !force &&
+      s.device_id &&
+      onlineIds.has(s.device_id) &&
+      s.device_id !== room.ambience_device &&
+      s.device_id !== room.capture_device;
+    if (keep) continue;
     const device = order[cursor % order.length];
     cursor++;
     assignSpeaker(roomId, s.name, device.id);
@@ -307,6 +317,7 @@ const SETTING_COLUMNS = {
   },
   ambienceDevice: { col: 'ambience_device', check: (v) => (v ? String(v) : null) },
   ttsModel: { col: 'tts_model', check: (v) => normalizeModel(v) },
+  captureDevice: { col: 'capture_device', check: (v) => (v ? String(v) : null) },
   gapMs: { col: 'gap_ms', check: (v) => Math.max(0, Math.min(5000, Number(v) || 0)) },
   chaosPeriodMs: {
     col: 'chaos_period_ms',
@@ -328,14 +339,17 @@ export function updateRoomSettings(roomId, patch) {
   vals.push(roomId);
   db.prepare(`UPDATE rooms SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
 
-  // 环境音设备不该同时念台词：把它身上的角色挪走（前提是还有别的设备）
-  if (patch.ambienceDevice !== undefined) {
+  // 环境音设备和收音设备都不该同时念台词：把它们身上的角色挪走
+  // （前提是还有别的设备可用，否则宁可让它兼职也别让台词没人读）
+  for (const key of ['ambienceDevice', 'captureDevice']) {
+    if (patch[key] === undefined) continue;
     const room = getRoom(roomId);
-    const others = getDevices(roomId).filter((d) => d.id !== room.ambience_device);
-    if (room.ambience_device && others.length) {
-      const stuck = getSpeakers(roomId).filter((s) => s.device_id === room.ambience_device);
-      stuck.forEach((s, i) => assignSpeaker(roomId, s.name, others[i % others.length].id));
-    }
+    const busy = key === 'ambienceDevice' ? room.ambience_device : room.capture_device;
+    if (!busy) continue;
+    const others = getDevices(roomId).filter((d) => d.id !== busy && d.id !== room.capture_device);
+    if (!others.length) continue;
+    const stuck = getSpeakers(roomId).filter((s) => s.device_id === busy);
+    stuck.forEach((s, i) => assignSpeaker(roomId, s.name, others[i % others.length].id));
   }
 }
 
@@ -379,6 +393,61 @@ export function roomSummaries(ids) {
     });
   }
   return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* 转录对比                                                            */
+/* ------------------------------------------------------------------ */
+
+export function getComparisons(roomId) {
+  return db
+    .prepare('SELECT * FROM comparisons WHERE room_id = ?')
+    .all(roomId)
+    .map((r) => ({
+      product: r.product,
+      transcript: r.transcript,
+      result: r.result ? JSON.parse(r.result) : null,
+      state: r.state,
+      error: r.error,
+      updatedAt: r.updated_at,
+    }));
+}
+
+/** 存下某个产品的转录文本，状态回到 idle（还没跑分） */
+export function putComparisonTranscript(roomId, product, transcript) {
+  const text = String(transcript ?? '').trim();
+  if (!text) {
+    db.prepare('DELETE FROM comparisons WHERE room_id = ? AND product = ?').run(roomId, product);
+    return;
+  }
+  db.prepare(
+    `INSERT INTO comparisons (room_id, product, transcript, result, state, error, updated_at)
+     VALUES (?, ?, ?, NULL, 'idle', NULL, ?)
+     ON CONFLICT(room_id, product) DO UPDATE SET
+       transcript = excluded.transcript,
+       result = NULL, state = 'idle', error = NULL, updated_at = excluded.updated_at`
+  ).run(roomId, product, text, Date.now());
+}
+
+export function setComparisonState(roomId, product, state, { result, error } = {}) {
+  db.prepare(
+    `UPDATE comparisons SET state = ?, result = ?, error = ?, updated_at = ?
+     WHERE room_id = ? AND product = ?`
+  ).run(
+    state,
+    result ? JSON.stringify(result) : null,
+    error || null,
+    Date.now(),
+    roomId,
+    product
+  );
+}
+
+/** 房间里那份原始 transcript，拼成 `Speaker: 内容` 的纯文本给裁判当真值 */
+export function referenceTranscript(roomId) {
+  return getLines(roomId)
+    .map((l) => `${l.speaker}: ${l.content}`)
+    .join('\n');
 }
 
 /** 当前场景用哪个链接 */
@@ -486,6 +555,7 @@ export function roomState(roomId) {
       ambienceVolume: room.ambience_volume,
       ambienceDevice: room.ambience_device,
       ttsModel: normalizeModel(room.tts_model),
+      captureDevice: room.capture_device,
       gapMs: room.gap_ms,
       chaosPeriodMs: room.chaos_period_ms,
       duckGain: room.duck_gain,

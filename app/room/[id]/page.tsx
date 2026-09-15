@@ -13,6 +13,7 @@ import { DevicePanel } from '@/components/DevicePanel';
 import { ToneSettings } from '@/components/ToneSettings';
 import { ScriptView } from '@/components/ScriptView';
 import { StagePanel } from '@/components/StagePanel';
+import { CompareModal } from '@/components/CompareModal';
 
 export default function RoomPage() {
   const params = useParams<{ id: string }>();
@@ -20,6 +21,7 @@ export default function RoomPage() {
 
   const [meta, setMeta] = useState<Meta | null>(null);
   const [copied, setCopied] = useState(false);
+  const [compareOpen, setCompareOpen] = useState(false);
 
   const room = useRoom(roomId);
   const {
@@ -161,6 +163,9 @@ export default function RoomPage() {
               onAutoAssign={actions.autoAssign}
               onRename={actions.renameDevice}
               onSetAmbienceDevice={(id) => actions.updateSettings({ ambienceDevice: id })}
+              onSetCaptureDevice={(id) => actions.updateSettings({ captureDevice: id })}
+              onOpenCompare={() => setCompareOpen(true)}
+              canCompare={isHost || state.settings.captureDevice === deviceId}
             />
           </div>
           <div>
@@ -196,6 +201,9 @@ export default function RoomPage() {
               onAutoAssign={actions.autoAssign}
               onRename={actions.renameDevice}
               onSetAmbienceDevice={(id) => actions.updateSettings({ ambienceDevice: id })}
+              onSetCaptureDevice={(id) => actions.updateSettings({ captureDevice: id })}
+              onOpenCompare={() => setCompareOpen(true)}
+              canCompare={isHost || state.settings.captureDevice === deviceId}
             />
             <ScriptView
               lines={lines}
@@ -231,6 +239,17 @@ export default function RoomPage() {
             />
           </div>
         </div>
+      )}
+
+      {compareOpen && state && (
+        <CompareModal
+          meta={meta}
+          comparisons={state.comparisons}
+          referenceLineCount={state.lineCount}
+          onPut={actions.putComparison}
+          onScore={actions.scoreComparison}
+          onClose={() => setCompareOpen(false)}
+        />
       )}
 
       <div className="hidden-player" ref={ambienceHostRef} />

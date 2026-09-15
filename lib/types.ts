@@ -37,6 +37,36 @@ export interface RoomSummary {
   speakerCount: number;
 }
 
+export interface CompareMeta {
+  products: { id: string; label: string }[];
+  dimensions: { key: string; label: string }[];
+  judges: { id: string; label: string; model: string }[];
+  /** Non-null when OPENROUTER_API_KEY is missing or looks wrong */
+  problem: string | null;
+}
+
+export interface JudgeScore {
+  score: number | null;
+  finding: string;
+}
+
+export interface JudgeResult {
+  judge: string;
+  label: string;
+  model: string;
+  scores: Record<string, JudgeScore>;
+  summary: string;
+}
+
+export interface Comparison {
+  product: string;
+  transcript: string;
+  result: { judges: JudgeResult[]; failures: { label: string; message: string }[] } | null;
+  state: 'idle' | 'scoring' | 'done' | 'failed';
+  error: string | null;
+  updatedAt: number;
+}
+
 export interface Meta {
   voices: VoiceInfo[];
   dimensions: Record<DimensionKey, Dimension>;
@@ -47,6 +77,7 @@ export interface Meta {
   titleMaxWeight: number;
   ttsConfigured: boolean;
   ttsProblem: string | null;
+  compare: CompareMeta;
 }
 
 export interface Speaker {
@@ -81,6 +112,8 @@ export interface RoomSettings {
   ambienceUrl: string | null;
   ambienceVolume: number;
   ambienceDevice: string | null;
+  /** Listens only — plays nothing and is never assigned a speaker */
+  captureDevice: string | null;
   ttsModel: string;
   gapMs: number;
   chaosPeriodMs: number;
@@ -97,6 +130,7 @@ export interface RoomState {
   speakers: Speaker[];
   devices: Device[];
   lineCount: number;
+  comparisons: Comparison[];
 }
 
 export interface Progress {

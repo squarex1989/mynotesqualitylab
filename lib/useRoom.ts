@@ -310,6 +310,9 @@ export function useRoom(roomId: string) {
       start: () => emit('room:start'),
       stop: () => emit('room:stop'),
       startGeneration: () => emit('generation:start'),
+      putComparison: (product: string, transcript: string) =>
+        emit('compare:put', { product, transcript }),
+      scoreComparison: (product: string) => emit('compare:score', { product }),
     }),
     [emit]
   );
