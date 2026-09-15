@@ -455,6 +455,13 @@ export function ambienceUrlFor(room) {
   return room.ambience_kind === 'airport' ? room.ambience_url_airport : room.ambience_url_cafe;
 }
 
+/** 关键词表：打分时按最高档权重算，也用来在中文里识别专有名词 */
+export function setGlossary(roomId, text) {
+  const clean = String(text || '').slice(0, 4000);
+  db.prepare('UPDATE rooms SET glossary = ? WHERE id = ?').run(clean, roomId);
+  return clean;
+}
+
 export function setRoomStatus(roomId, status) {
   db.prepare('UPDATE rooms SET status = ? WHERE id = ?').run(status, roomId);
 }
@@ -556,6 +563,7 @@ export function roomState(roomId) {
       ambienceDevice: room.ambience_device,
       ttsModel: normalizeModel(room.tts_model),
       captureDevice: room.capture_device,
+      glossary: room.glossary || '',
       gapMs: room.gap_ms,
       chaosPeriodMs: room.chaos_period_ms,
       duckGain: room.duck_gain,

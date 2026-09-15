@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS rooms (
   ambience_device TEXT,
   tts_model     TEXT,                            -- 每个房间可以自己选免费/付费模型
   capture_device TEXT,                           -- 收音设备：只跑对比、不播声也不承担 speaker
+  glossary      TEXT,                            -- 人名/产品名，每行一个；打分时按关键词加权
   gap_ms        INTEGER NOT NULL DEFAULT 450,
   chaos_period_ms INTEGER NOT NULL DEFAULT 20000,
   duck_gain     REAL NOT NULL DEFAULT 0.5,
@@ -136,6 +137,7 @@ addColumnIfMissing('rooms', 'ambience_url_cafe', 'TEXT');
 addColumnIfMissing('rooms', 'ambience_url_airport', 'TEXT');
 addColumnIfMissing('speakers', 'volume', 'INTEGER NOT NULL DEFAULT 100');
 addColumnIfMissing('rooms', 'capture_device', 'TEXT');
+addColumnIfMissing('rooms', 'glossary', 'TEXT');
 
 // 场景默认音源。放在这一层是为了让下面的回填和 createRoom 用同一份值。
 export const AMBIENCE_DEFAULTS = {

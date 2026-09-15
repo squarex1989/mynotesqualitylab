@@ -1,90 +1,260 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
-import type { Comparison, Meta, JudgeResult, WerMetrics } from '@/lib/types';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type {
+  Comparison,
+  Meta,
+  CompareResult,
+  CodeMetrics,
+  Finding,
+  SpeakerReport,
+  TermReport,
+} from '@/lib/types';
 
 interface Props {
   meta: Meta | null;
   comparisons: Comparison[];
   referenceLineCount: number;
+  glossary: string;
   onPut: (product: string, transcript: string) => void;
   onScore: (product: string) => void;
+  onGlossary: (text: string) => void;
   onClose: () => void;
 }
 
-/** 平均分，用来给整体一个粗略排序 —— 单个维度仍然分模型看 */
-function meanScore(r: JudgeResult) {
-  const nums = Object.values(r.scores)
-    .map((s) => s.score)
-    .filter((n): n is number => typeof n === 'number');
-  return nums.length ? Math.round(nums.reduce((a, b) => a + b, 0) / nums.length) : null;
-}
+const pct = (n: number | null | undefined) => (typeof n === 'number' ? `${n}%` : '—');
 
-function scoreColor(n: number | null) {
-  if (n === null) return 'var(--muted)';
-  if (n >= 90) return 'var(--ok)';
-  if (n >= 70) return 'var(--accent)';
-  return 'var(--err)';
-}
-
-/** 错误率：越低越好，和分数的配色方向相反 */
-function rateColor(n: number) {
+/** 错误率越低越好 */
+function errColor(n: number | null | undefined) {
+  if (typeof n !== 'number') return 'var(--muted)';
   if (n <= 5) return 'var(--ok)';
   if (n <= 15) return 'var(--accent)';
   return 'var(--err)';
 }
 
-const pct = (n: number | undefined) => (typeof n === 'number' ? `${n}%` : '—');
+/** 正确率越高越好 */
+function okColor(n: number | null | undefined) {
+  if (typeof n !== 'number') return 'var(--muted)';
+  if (n >= 95) return 'var(--ok)';
+  if (n >= 85) return 'var(--accent)';
+  return 'var(--err)';
+}
 
-/**
- * 逐字指标。单独一块、和模型评分分开放 —— 这些数是算出来的，
- * 不该和模型的判断混在一张表里让人误以为也是估的。
- */
-function WordMetrics({ w }: { w: WerMetrics }) {
-  if (!w || w.unavailable) return null;
+function Stat({ value, label, color }: { value: string; label: string; color: string }) {
+  return (
+    <div className="metric">
+      <span className="metric-n" style={{ color }}>
+        {value}
+      </span>
+      <span className="tiny muted">{label}</span>
+    </div>
+  );
+}
+
+/** 实测指标。全部由编辑距离算出，不经过模型。 */
+function Measured({ m }: { m: CodeMetrics }) {
+  const w = m.wer;
+  const g = m.weighted;
+  if (!w || w.unavailable || !g) return null;
   const unit = w.mode === 'char' ? 'characters' : 'words';
   return (
     <div className="metrics">
       <div className="spread" style={{ marginBottom: 8 }}>
-        <strong className="tiny">Word-for-word ({w.metric}, measured)</strong>
+        <strong className="tiny">Measured by edit distance</strong>
         <span className="tiny muted">
-          {w.refTokens.toLocaleString()} reference {unit} → {w.hypTokens?.toLocaleString()} transcribed
+          {w.refTokens.toLocaleString()} script {unit} → {w.hypTokens?.toLocaleString()} transcribed
         </span>
       </div>
+
       <div className="metric-row">
-        <div className="metric">
-          <span className="metric-n" style={{ color: rateColor(w.wer ?? 0) }}>{pct(w.wer)}</span>
-          <span className="tiny muted">{w.metric}</span>
-        </div>
-        <div className="metric">
-          <span className="metric-n" style={{ color: scoreColor(w.accuracy ?? null) }}>
-            {pct(w.accuracy)}
-          </span>
-          <span className="tiny muted">exact match</span>
-        </div>
-        <div className="metric">
-          <span className="metric-n" style={{ color: rateColor(w.deletionRate ?? 0) }}>
-            {pct(w.deletionRate)}
-          </span>
-          <span className="tiny muted">deleted ({w.deletions})</span>
-        </div>
-        <div className="metric">
-          <span className="metric-n" style={{ color: rateColor(w.substitutionRate ?? 0) }}>
-            {pct(w.substitutionRate)}
-          </span>
-          <span className="tiny muted">substituted ({w.substitutions})</span>
-        </div>
-        <div className="metric">
-          <span className="metric-n" style={{ color: rateColor(w.insertionRate ?? 0) }}>
-            {pct(w.insertionRate)}
-          </span>
-          <span className="tiny muted">inserted ({w.insertions})</span>
-        </div>
+        <Stat value={pct(g.wer)} label={`weighted ${w.metric}`} color={errColor(g.wer)} />
+        <Stat value={pct(w.wer)} label={`plain ${w.metric}`} color={errColor(w.wer)} />
+        <Stat value={pct(w.accuracy)} label="exact match" color={okColor(w.accuracy)} />
+        <Stat
+          value={pct(g.keyErrorRate)}
+          label={`key ${unit} wrong (${g.keyTokens})`}
+          color={errColor(g.keyErrorRate)}
+        />
+        <Stat
+          value={pct(w.deletionRate)}
+          label={`deleted (${w.deletions})`}
+          color={errColor(w.deletionRate)}
+        />
+        <Stat
+          value={pct(w.substitutionRate)}
+          label={`substituted (${w.substitutions})`}
+          color={errColor(w.substitutionRate)}
+        />
+        <Stat
+          value={pct(w.insertionRate)}
+          label={`inserted (${w.insertions})`}
+          color={errColor(w.insertionRate)}
+        />
       </div>
+
       <p className="tiny muted" style={{ margin: '8px 0 0' }}>
-        Edit distance against this room&apos;s script, speaker labels and timestamps stripped.
-        {w.approximate && ' Approximate — the transcript was too long to align exactly.'}
+        Weighted counts filler {unit} ×{g.weights.filler} and names, numbers and negations ×
+        {g.weights.key} — dropping &ldquo;um&rdquo; barely registers, dropping a name does. This
+        script has {g.fillerTokens} filler, {g.normalTokens} ordinary and {g.keyTokens} key {unit}.
+        {w.approximate &&
+          ' Alignment was approximate — the transcript was too long to align exactly.'}
       </p>
+    </div>
+  );
+}
+
+/** 专有名词 / 数字：直接列出录成了什么，不打分 */
+function Terms({ r, title, empty }: { r: TermReport | undefined; title: string; empty: string }) {
+  if (!r || !r.checked) return null;
+  return (
+    <div className="block">
+      <div className="spread">
+        <strong className="tiny">{title}</strong>
+        <span className="tiny" style={{ color: r.issues.length ? 'var(--err)' : 'var(--ok)' }}>
+          {r.clean}/{r.checked} correct
+        </span>
+      </div>
+      {r.issues.length === 0 ? (
+        <p className="tiny muted" style={{ margin: '4px 0 0' }}>
+          {empty}
+        </p>
+      ) : (
+        <ul className="terms">
+          {r.issues.map((i) => (
+            <li key={i.term}>
+              <code>{i.term}</code>
+              {i.wrong.map((w) => (
+                <span key={w.got}>
+                  {' → '}
+                  <code style={{ color: 'var(--err)' }}>{w.got || '(garbled)'}</code>
+                  {w.count > 1 && <span className="muted"> ×{w.count}</span>}
+                </span>
+              ))}
+              {i.dropped > 0 && (
+                <span style={{ color: 'var(--err)' }}>
+                  {' '}
+                  dropped{i.dropped > 1 ? ` ×${i.dropped}` : ''}
+                </span>
+              )}
+              {i.correct > 0 && <span className="muted"> ({i.correct} correct)</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 说话人归属。候选用什么标签无所谓，只要每个标签稳定对应一个真人 ——
+ * 所以看的是最优一对一映射下有多少词落在了对的人名下。
+ */
+function Speakers({ s }: { s: SpeakerReport | undefined }) {
+  if (!s || s.unavailable) return null;
+  if (s.unlabeled) {
+    return (
+      <div className="block">
+        <strong className="tiny">Speaker attribution</strong>
+        <p className="tiny" style={{ margin: '4px 0 0', color: 'var(--accent)' }}>
+          N/A — this transcript has no speaker labels at all, so the product never attempted
+          speaker separation. That is a different failure from separating them and getting it wrong.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="block">
+      <div className="spread">
+        <strong className="tiny">Speaker attribution</strong>
+        <span className="tiny" style={{ color: okColor(s.attributionAccuracy) }}>
+          {pct(s.attributionAccuracy)} of aligned words under the right speaker
+        </span>
+      </div>
+      <ul className="terms">
+        {(s.refSpeakers ?? []).map((r) => (
+          <li key={r.name}>
+            <code>{r.name}</code>
+            {' → '}
+            {r.mappedTo ? (
+              <code>{r.mappedTo}</code>
+            ) : (
+              <span style={{ color: 'var(--err)' }}>no matching label</span>
+            )}
+            <span className="muted">
+              {' '}
+              {r.matched}/{r.tokens} words
+            </span>
+            {r.strays.length > 0 && (
+              <span style={{ color: 'var(--err)' }}>
+                {' '}
+                — also under {r.strays.map((x) => `${x.label} (${x.tokens})`).join(', ')}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+      {(s.merges ?? []).map((m) => (
+        <p key={m.label} className="tiny" style={{ margin: '4px 0 0', color: 'var(--err)' }}>
+          {m.label} merges {m.speakers.join(' and ')} into one speaker.
+        </p>
+      ))}
+      {(s.splits ?? []).map((p) => (
+        <p key={p.speaker} className="tiny" style={{ margin: '4px 0 0', color: 'var(--err)' }}>
+          {p.speaker} was split across {p.labels.map((l) => l.label).join(', ')}.
+        </p>
+      ))}
+      {!!s.labelCountDelta && (
+        <p className="tiny muted" style={{ margin: '4px 0 0' }}>
+          The transcript has {Math.abs(s.labelCountDelta)}{' '}
+          {s.labelCountDelta > 0 ? 'more' : 'fewer'} speaker
+          {Math.abs(s.labelCountDelta) === 1 ? '' : 's'} than the script.
+        </p>
+      )}
+    </div>
+  );
+}
+
+const JUDGE_SHORT: Record<string, string> = { gpt: 'GPT', claude: 'Claude' };
+
+const sourceLabel = (sources: string[]) =>
+  sources.length > 1 ? 'both judges' : `${JUDGE_SHORT[sources[0]] ?? sources[0]} only`;
+
+/** LLM 的证据条目。两个裁判都抓到的排前面并标出来。 */
+function Evidence({ items, label }: { items: Finding[]; label: string }) {
+  return (
+    <div className="block">
+      <div className="spread">
+        <strong className="tiny">{label}</strong>
+        <span className="tiny" style={{ color: items.length ? 'var(--err)' : 'var(--ok)' }}>
+          {items.length === 0
+            ? 'none found'
+            : `${items.length} found (${items.filter((i) => i.severity === 'critical').length} critical)`}
+        </span>
+      </div>
+      {items.map((it, n) => (
+        <div key={`${it.hunk}-${n}`} className="evi">
+          <div className="row tiny" style={{ gap: 6, marginBottom: 4 }}>
+            <span className={`badge${it.severity === 'critical' ? ' bad' : ''}`}>
+              {it.severity}
+            </span>
+            <span className={`badge${it.sources.length > 1 ? ' agree' : ''}`}>
+              {sourceLabel(it.sources)}
+            </span>
+          </div>
+          <div className="tiny">
+            <span className="muted">script:</span> {it.reference}
+          </div>
+          <div className="tiny">
+            <span className="muted">transcript:</span>{' '}
+            <span style={{ color: 'var(--err)' }}>{it.candidate}</span>
+          </div>
+          {it.why && (
+            <div className="tiny muted" style={{ marginTop: 3 }}>
+              {it.why}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -93,25 +263,30 @@ export function CompareModal({
   meta,
   comparisons,
   referenceLineCount,
+  glossary,
   onPut,
   onScore,
+  onGlossary,
   onClose,
 }: Props) {
   const products = meta?.compare.products ?? [];
-  const dimensions = meta?.compare.dimensions ?? [];
+  const questions = meta?.compare.questions ?? [];
   const judges = meta?.compare.judges ?? [];
   const keyProblem = meta?.compare.problem;
-  const werOnly = 'WER / deletion rate';
 
-  const byProduct = useMemo(
-    () => new Map(comparisons.map((c) => [c.product, c])),
-    [comparisons]
-  );
+  const byProduct = useMemo(() => new Map(comparisons.map((c) => [c.product, c])), [comparisons]);
 
   // 未保存的草稿：产品 id -> 文本。保存后回落到服务端那份。
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [terms, setTerms] = useState(glossary);
   const [copied, setCopied] = useState(false);
   const fileRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  // 别的设备改了词表就同步过来，但不要打断正在输入的人
+  const focused = useRef(false);
+  useEffect(() => {
+    if (!focused.current) setTerms(glossary);
+  }, [glossary]);
 
   const textOf = (id: string) => drafts[id] ?? byProduct.get(id)?.transcript ?? '';
   const dirty = (id: string) =>
@@ -123,47 +298,140 @@ export function CompareModal({
     setDrafts((d) => ({ ...d, [id]: text }));
   };
 
-  /** 把所有产品的分数和简报拼成纯文本，方便贴进别处 */
+  /** 按加权错误率排序 —— 这是确定值，不造合成总分 */
+  const ranked = useMemo(() => {
+    const rows = products
+      .map((p) => ({ p, c: byProduct.get(p.id) }))
+      .filter((r) => !!r.c?.result && !r.c.result.metrics.wer?.unavailable)
+      .map((r) => ({ p: r.p, res: r.c!.result as CompareResult }));
+    rows.sort(
+      (a, b) => (a.res.metrics.weighted?.wer ?? 999) - (b.res.metrics.weighted?.wer ?? 999)
+    );
+    return rows;
+  }, [products, byProduct]);
+
+  /** 把所有结果拼成 Markdown，方便贴进别处 */
   const copyAll = async () => {
-    const lines: string[] = [`Transcript comparison — reference has ${referenceLineCount} lines`, ''];
+    const out: string[] = [
+      '# Transcript comparison',
+      `Script: ${referenceLineCount} lines. Error rates, proper nouns, numbers and speaker attribution measured by edit distance. Missing key content and reversed meaning judged by ${judges
+        .map((j) => j.label)
+        .join(' and ')}.`,
+      '',
+    ];
+
+    if (ranked.length > 1) {
+      out.push(
+        '## Ranking (by weighted error rate, lower is better)',
+        '',
+        '| # | Product | Weighted | Plain | Deleted | Key wrong | Speakers | Critical |',
+        '|---|---|---|---|---|---|---|---|'
+      );
+      ranked.forEach((r, i) => {
+        const m = r.res.metrics;
+        out.push(
+          `| ${i + 1} | ${r.p.label} | ${pct(m.weighted?.wer)} | ${pct(m.wer.wer)} | ${pct(
+            m.wer.deletionRate
+          )} | ${pct(m.weighted?.keyErrorRate)} | ${
+            m.speakers?.unlabeled ? 'none' : pct(m.speakers?.attributionAccuracy)
+          } | ${r.res.critical ?? 0} |`
+        );
+      });
+      out.push('');
+    }
+
     for (const p of products) {
       const c = byProduct.get(p.id);
-      lines.push(`## ${p.label}`);
+      out.push(`## ${p.label}`);
       if (!c?.result) {
-        lines.push(c?.transcript ? '(not scored yet)' : '(no transcript)', '');
+        out.push(c?.transcript ? '(not scored yet)' : '(no transcript)', '');
         continue;
       }
-      const w = c.result.wer;
-      if (w && !w.unavailable) {
-        const unit = w.mode === 'char' ? 'characters' : 'words';
-        lines.push(
-          `### Word-for-word (${w.metric}, measured by edit distance)`,
-          `- ${w.metric}: ${w.wer}%  |  exact match: ${w.accuracy}%`,
-          `- Deleted: ${w.deletions} (${w.deletionRate}%)`,
-          `- Substituted: ${w.substitutions} (${w.substitutionRate}%)`,
-          `- Inserted: ${w.insertions} (${w.insertionRate}%)`,
-          `- Reference: ${w.refTokens} ${unit}; transcribed: ${w.hypTokens} ${unit}` +
-            (w.approximate ? ' (approximate alignment)' : ''),
-          ''
-        );
+      const m = c.result.metrics;
+      const w = m.wer;
+      if (w.unavailable) {
+        out.push('(nothing to compare against)', '');
+        continue;
       }
-      for (const j of c.result.judges) {
-        const avg = meanScore(j);
-        lines.push(`### ${j.label}${avg !== null ? ` — overall ${avg}` : ''}`);
-        for (const d of dimensions) {
-          const s = j.scores[d.key];
-          if (!s) continue;
-          lines.push(`- ${d.label}: ${s.score ?? '—'} — ${s.finding}`);
+      const unit = w.mode === 'char' ? 'characters' : 'words';
+      out.push(
+        '### Measured (edit distance)',
+        `- Weighted ${w.metric}: ${pct(m.weighted?.wer)}  |  plain ${w.metric}: ${pct(
+          w.wer
+        )}  |  exact match: ${pct(w.accuracy)}`,
+        `- Key ${unit} wrong or missing: ${pct(m.weighted?.keyErrorRate)} of ${m.weighted?.keyTokens}`,
+        `- Deleted ${w.deletions} (${pct(w.deletionRate)}), substituted ${w.substitutions} (${pct(
+          w.substitutionRate
+        )}), inserted ${w.insertions} (${pct(w.insertionRate)})`,
+        `- Script: ${w.refTokens} ${unit}; transcript: ${w.hypTokens} ${unit}` +
+          (w.approximate ? ' (approximate alignment)' : ''),
+        ''
+      );
+
+      const reports: [string, TermReport | undefined][] = [
+        ['Proper nouns', m.properNouns],
+        ['Numbers', m.numbers],
+      ];
+      for (const [title, rep] of reports) {
+        if (!rep?.checked) continue;
+        out.push(`### ${title} — ${rep.clean}/${rep.checked} correct`);
+        if (!rep.issues.length) out.push('- all correct');
+        for (const i of rep.issues) {
+          const bits = [
+            ...i.wrong.map((x) => `→ "${x.got}"${x.count > 1 ? ` ×${x.count}` : ''}`),
+            ...(i.dropped ? [`dropped${i.dropped > 1 ? ` ×${i.dropped}` : ''}`] : []),
+          ];
+          out.push(`- "${i.term}" ${bits.join(', ')}`);
         }
-        if (j.summary) lines.push('', j.summary);
-        lines.push('');
+        out.push('');
       }
-      for (const f of c.result.failures ?? []) {
-        lines.push(`### ${f.label} — failed: ${f.message}`, '');
+
+      const s = m.speakers;
+      if (s && !s.unavailable) {
+        out.push('### Speaker attribution');
+        if (s.unlabeled) out.push('- N/A — the transcript has no speaker labels');
+        else {
+          out.push(`- ${pct(s.attributionAccuracy)} of aligned words under the right speaker`);
+          for (const r of s.refSpeakers ?? [])
+            out.push(
+              `- ${r.name} → ${r.mappedTo ?? 'no matching label'} (${r.matched}/${r.tokens} words)` +
+                (r.strays.length
+                  ? `; also under ${r.strays.map((x) => `${x.label} (${x.tokens})`).join(', ')}`
+                  : '')
+            );
+          for (const g of s.merges ?? [])
+            out.push(`- ${g.label} merges ${g.speakers.join(' and ')}`);
+          for (const g of s.splits ?? [])
+            out.push(`- ${g.speaker} split across ${g.labels.map((l) => l.label).join(', ')}`);
+        }
+        out.push('');
       }
+
+      for (const q of questions) {
+        const items = c.result.evidence?.[q.key] ?? [];
+        out.push(
+          `### ${q.label} — ${items.length} found (${
+            items.filter((i) => i.severity === 'critical').length
+          } critical)`
+        );
+        if (!items.length) out.push('- none found');
+        for (const it of items) {
+          out.push(
+            `- [${it.severity}, ${sourceLabel(it.sources)}]`,
+            `  - script: ${it.reference}`,
+            `  - transcript: ${it.candidate}`,
+            ...(it.why ? [`  - ${it.why}`] : [])
+          );
+        }
+        out.push('');
+      }
+
+      for (const j of c.result.judges) if (j.summary) out.push(`**${j.label}:** ${j.summary}`, '');
+      for (const f of c.result.failures ?? []) out.push(`${f.label} failed: ${f.message}`, '');
     }
+
     try {
-      await navigator.clipboard.writeText(lines.join('\n'));
+      await navigator.clipboard.writeText(out.join('\n'));
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
     } catch {
@@ -172,6 +440,7 @@ export function CompareModal({
   };
 
   const anyResult = products.some((p) => byProduct.get(p.id)?.result);
+  const termCount = terms.split(/[\n,;、，；]/).filter((t) => t.trim()).length;
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -191,15 +460,16 @@ export function CompareModal({
         </div>
 
         <p className="sub">
-          Graded against this room&apos;s script ({referenceLineCount} lines). Word-for-word
-          accuracy is measured by edit distance; the remaining dimensions are judged by{' '}
-          {judges.map((j) => j.label).join(' and ')}.
+          Checked against this room&apos;s script ({referenceLineCount} lines). Error rates, proper
+          nouns, numbers and speaker attribution are measured by edit distance. Only two questions
+          go to {judges.map((j) => j.label).join(' and ')}: whether the missing content matters, and
+          whether any meaning was reversed.
         </p>
 
         {keyProblem && (
           <p className="tiny" style={{ color: 'var(--err)' }}>
-            {keyProblem} — {werOnly} will still be measured, but the model-judged dimensions
-            will be skipped until you set the key and restart.
+            {keyProblem} — everything measured still works, but the two judged questions are skipped
+            until you set the key and restart.
           </p>
         )}
 
@@ -207,6 +477,97 @@ export function CompareModal({
           <p className="tiny" style={{ color: 'var(--err)' }}>
             This room has no script yet, so there is nothing to compare against.
           </p>
+        )}
+
+        <div className="card" style={{ background: 'var(--panel-2)' }}>
+          <label className="field">
+            <span className="spread">
+              <span>Glossary — names, products, jargon (one per line)</span>
+              <span className="muted">{termCount || 'none'}</span>
+            </span>
+            <textarea
+              rows={3}
+              value={terms}
+              placeholder={'Priya Raghavan\nAcme Robotics\nQuicksilver'}
+              onFocus={() => {
+                focused.current = true;
+              }}
+              onBlur={() => {
+                focused.current = false;
+                if (terms !== glossary) onGlossary(terms);
+              }}
+              onChange={(e) => setTerms(e.target.value)}
+              style={{ fontSize: 12.5 }}
+            />
+          </label>
+          <p className="sub" style={{ margin: '8px 0 0' }}>
+            These count triple, and each one is checked individually so you can see what it came out
+            as. Speaker names from the script and anything containing a digit are included
+            automatically. Latin proper nouns are picked up from capitalisation — Chinese and
+            Japanese have none, so for those this list is the only way.
+          </p>
+        </div>
+
+        {ranked.length > 1 && (
+          <div className="card" style={{ background: 'var(--panel-2)' }}>
+            <h2 style={{ margin: '0 0 4px' }}>Ranking</h2>
+            <p className="sub" style={{ marginTop: 0 }}>
+              By weighted error rate, lowest first. No composite score — one number would hide which
+              kind of mistake each product actually makes.
+            </p>
+            <table className="scores rank">
+              <thead>
+                <tr>
+                  <th />
+                  <th>Weighted</th>
+                  <th>Plain</th>
+                  <th>Deleted</th>
+                  <th>Key wrong</th>
+                  <th>Speakers</th>
+                  <th>Critical</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ranked.map((r, i) => {
+                  const m = r.res.metrics;
+                  return (
+                    <tr key={r.p.id}>
+                      <td className="dim">
+                        {i + 1}. {r.p.label}
+                      </td>
+                      <td style={{ color: errColor(m.weighted?.wer), fontWeight: 700 }}>
+                        {pct(m.weighted?.wer)}
+                      </td>
+                      <td style={{ color: errColor(m.wer.wer) }}>{pct(m.wer.wer)}</td>
+                      <td style={{ color: errColor(m.wer.deletionRate) }}>
+                        {pct(m.wer.deletionRate)}
+                      </td>
+                      <td style={{ color: errColor(m.weighted?.keyErrorRate) }}>
+                        {pct(m.weighted?.keyErrorRate)}
+                      </td>
+                      <td
+                        style={{
+                          color: m.speakers?.unlabeled
+                            ? 'var(--accent)'
+                            : okColor(m.speakers?.attributionAccuracy),
+                        }}
+                      >
+                        {m.speakers?.unlabeled ? 'none' : pct(m.speakers?.attributionAccuracy)}
+                      </td>
+                      <td
+                        style={{
+                          color: r.res.critical ? 'var(--err)' : 'var(--ok)',
+                          fontWeight: 600,
+                        }}
+                      >
+                        {r.res.critical ?? 0}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
 
         {products.map((p) => {
@@ -218,10 +579,7 @@ export function CompareModal({
               <div className="spread">
                 <h2 style={{ margin: 0 }}>{p.label}</h2>
                 <div className="row" style={{ gap: 6 }}>
-                  <button
-                    className="small ghost"
-                    onClick={() => fileRefs.current[p.id]?.click()}
-                  >
+                  <button className="small ghost" onClick={() => fileRefs.current[p.id]?.click()}>
                     Choose file
                   </button>
                   <input
@@ -250,9 +608,7 @@ export function CompareModal({
                   )}
                   <button
                     className="small primary"
-                    disabled={
-                      scoring || !text.trim() || dirty(p.id) || referenceLineCount === 0
-                    }
+                    disabled={scoring || !text.trim() || dirty(p.id) || referenceLineCount === 0}
                     onClick={() => onScore(p.id)}
                   >
                     {scoring ? 'Scoring…' : c?.result ? 'Re-score' : 'Score'}
@@ -287,63 +643,27 @@ export function CompareModal({
 
               {c?.result && (
                 <div style={{ marginTop: 12 }}>
-                  <WordMetrics w={c.result.wer} />
+                  <Measured m={c.result.metrics} />
 
-                  {c.result.judges.length > 0 && (
-                  <table className="scores">
-                    <thead>
-                      <tr>
-                        <th />
-                        {c.result.judges.map((j) => (
-                          <th key={j.judge}>{j.label}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {dimensions.map((d) => (
-                        <tr key={d.key}>
-                          <td className="dim">{d.label}</td>
-                          {c.result!.judges.map((j) => {
-                            const s = j.scores[d.key];
-                            return (
-                              <td key={j.judge}>
-                                <span
-                                  style={{
-                                    color: scoreColor(s?.score ?? null),
-                                    fontWeight: 600,
-                                    fontFamily: 'var(--mono)',
-                                  }}
-                                >
-                                  {s?.score ?? '—'}
-                                </span>
-                                {s?.finding && <div className="finding">{s.finding}</div>}
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))}
-                      <tr>
-                        <td className="dim">Overall</td>
-                        {c.result.judges.map((j) => {
-                          const avg = meanScore(j);
-                          return (
-                            <td key={j.judge}>
-                              <span
-                                style={{
-                                  color: scoreColor(avg),
-                                  fontWeight: 700,
-                                  fontFamily: 'var(--mono)',
-                                }}
-                              >
-                                {avg ?? '—'}
-                              </span>
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    </tbody>
-                  </table>
-                  )}
+                  <Terms
+                    r={c.result.metrics.properNouns}
+                    title="Proper nouns"
+                    empty="Every name came through correctly."
+                  />
+                  <Terms
+                    r={c.result.metrics.numbers}
+                    title="Numbers"
+                    empty="Every number came through correctly."
+                  />
+                  <Speakers s={c.result.metrics.speakers} />
+
+                  {questions.map((q) => (
+                    <Evidence
+                      key={q.key}
+                      label={q.label}
+                      items={c.result!.evidence?.[q.key] ?? []}
+                    />
+                  ))}
 
                   {c.result.judges.map((j) =>
                     j.summary ? (

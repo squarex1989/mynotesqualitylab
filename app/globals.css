@@ -516,3 +516,56 @@ table.scores .finding {
   font-weight: 700;
   line-height: 1.1;
 }
+
+/* Compare：每一块确定性结果（专有名词 / 数字 / 说话人）和证据列表 */
+.block {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  margin-top: 10px;
+}
+.terms {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+.terms code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+.evi {
+  border-left: 2px solid var(--line);
+  padding: 6px 0 6px 10px;
+  margin-top: 8px;
+}
+.badge {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+}
+.badge.bad {
+  border-color: rgba(239, 111, 111, 0.5);
+  color: var(--err);
+}
+.badge.agree {
+  border-color: rgba(120, 180, 255, 0.5);
+  color: var(--accent);
+}
+.scores.rank td,
+.scores.rank th {
+  font-family: var(--mono);
+  font-size: 12px;
+  text-align: right;
+  white-space: nowrap;
+}
+.scores.rank td.dim,
+.scores.rank th:first-child {
+  text-align: left;
+  font-family: inherit;
+}

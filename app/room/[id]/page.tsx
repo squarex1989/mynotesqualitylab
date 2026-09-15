@@ -246,8 +246,10 @@ export default function RoomPage() {
           meta={meta}
           comparisons={state.comparisons}
           referenceLineCount={state.lineCount}
+          glossary={state.settings.glossary}
           onPut={actions.putComparison}
           onScore={actions.scoreComparison}
+          onGlossary={actions.setGlossary}
           onClose={() => setCompareOpen(false)}
         />
       )}

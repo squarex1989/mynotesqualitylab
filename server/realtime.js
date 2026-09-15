@@ -21,6 +21,7 @@ import {
   getComparisons,
   putComparisonTranscript,
   setComparisonState,
+  setGlossary,
   referenceTranscript,
 } from './rooms.js';
 import { gradeTranscript, isProduct } from './judge.js';
@@ -150,6 +151,14 @@ export function attachRealtime(httpServer) {
     );
 
     socket.on(
+      'compare:glossary',
+      compareOnly(({ text }) => {
+        setGlossary(roomId, text);
+        broadcast(roomId);
+      })
+    );
+
+    socket.on(
       'compare:score',
       compareOnly(async ({ product }) => {
         if (!isProduct(product)) throw new Error('Unknown product');
@@ -165,7 +174,11 @@ export function attachRealtime(httpServer) {
         broadcast(roomId);
 
         try {
-          const result = await gradeTranscript({ reference, candidate: row.transcript });
+          const result = await gradeTranscript({
+            reference,
+            candidate: row.transcript,
+            glossary: getRoom(roomId)?.glossary || '',
+          });
           setComparisonState(roomId, product, 'done', { result });
         } catch (err) {
           setComparisonState(roomId, product, 'failed', { error: err.message || String(err) });

@@ -19,7 +19,7 @@ import { jobStatus } from './generate.js';
 import { apiKeyProblem, TTS_MODELS, DEFAULT_TTS_MODEL } from './tts.js';
 import {
   PRODUCTS,
-  DIMENSIONS as JUDGE_DIMENSIONS,
+  QUESTIONS as JUDGE_QUESTIONS,
   JUDGES,
   apiKeyProblem as judgeKeyProblem,
 } from './judge.js';
@@ -61,7 +61,7 @@ export function createApiRouter({ broadcast }) {
       ttsProblem: problem,
       compare: {
         products: PRODUCTS,
-        dimensions: JUDGE_DIMENSIONS.map((d) => ({ key: d.key, label: d.label })),
+        questions: JUDGE_QUESTIONS.map((q) => ({ key: q.key, label: q.label, ask: q.ask })),
         judges: JUDGES.map((j) => ({ id: j.id, label: j.label, model: j.model })),
         problem: judgeKeyProblem(),
       },

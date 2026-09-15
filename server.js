@@ -30,7 +30,7 @@ app.all('*', (req, res) => handle(req, res));
 httpServer.listen(port, '0.0.0.0', () => {
   const urls = ['localhost', ...lanAddresses()].map((h) => `http://${h}:${port}`);
   console.log('');
-  console.log('  ReadRoom 已启动');
+  console.log('  Transcript Reader 已启动');
   urls.forEach((u) => console.log(`    ${u}`));
   const store = storageInfo();
   console.log(`  数据目录: ${store.dir}`);

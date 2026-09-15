@@ -313,6 +313,7 @@ export function useRoom(roomId: string) {
       putComparison: (product: string, transcript: string) =>
         emit('compare:put', { product, transcript }),
       scoreComparison: (product: string) => emit('compare:score', { product }),
+      setGlossary: (text: string) => emit('compare:glossary', { text }),
     }),
     [emit]
   );
