@@ -54,6 +54,9 @@ export default function RoomPage() {
     if (roomId) rememberRoom(roomId);
   }, [roomId]);
 
+  // 服务端眼里的「我自己」。诊断行要用它对照本机算出来的状态。
+  const meRow = state?.devices.find((d) => d.id === deviceId) ?? null;
+
   const speakingNames = useMemo(() => {
     const names = new Set<string>();
     for (const item of schedule) {
@@ -132,6 +135,14 @@ export default function RoomPage() {
       {audioDiag && (
         <p className="tiny muted" style={{ fontFamily: 'var(--mono)', margin: '0 0 10px' }}>
           audio on this device — {audioDiag}
+          {'  '}
+          {/* 设备自己算出来的状态 vs 服务端记下来的状态。两者不一致就说明
+              问题在上报链路，而不在声音解锁 —— 这一条直接把可能性劈成两半。 */}
+          local={audioState} server=
+          {meRow ? (meRow.audioReady ? 'ready' : 'blocked') : 'no-row'} socket=
+          {connected ? 'up' : 'down'} id={deviceId ? deviceId.slice(0, 6) : '?'} rows=
+          {state ? state.devices.filter((d) => d.id === deviceId).length : 0}/
+          {state ? state.devices.length : 0}
         </p>
       )}
 

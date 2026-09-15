@@ -69,7 +69,12 @@ Object.defineProperty(globalThis, 'navigator', {
   value: {
     userAgent:
       'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/140.0.7339.98 Mobile/15E148 Safari/604.1',
+    maxTouchPoints: 5,
   },
+});
+Object.defineProperty(globalThis, 'screen', {
+  configurable: true,
+  value: { width: 393, height: 852 },
 });
 
 const { AudioEngine, reportedAudioState, audioDiagnostics } = await import(
@@ -220,7 +225,27 @@ console.log('   (d) 正常解锁          →', d);
 t('(d) state=running ever=yes', d.includes('state=running') && d.includes('ever=yes'), d);
 t('(d) 没有任何错误字段', !d.includes('rejects=') && !d.includes('timeouts=') && !d.includes('last='), d);
 t('(d) 认出是 iPhone 上的 Chrome', d.includes('ua=iOS/Chrome-iOS/18.5'), d);
+t('(d) 带上触摸点数和屏幕尺寸（UA 能被改写，这两个不能）',
+  d.includes('touch5') && d.includes('393x852'), d);
 t('(d) WebKit 没有 userActivation → n/a 本身也是信息', d.includes('active=n/a'), d);
+
+console.log('\n9b) 「请求桌面版网站」会把 UA 改成 Macintosh，不能因此认成 Mac');
+Object.defineProperty(globalThis, 'navigator', {
+  configurable: true,
+  value: {
+    // iOS 上开了桌面版模式的真实形态：出现 Macintosh，但 CriOS 还在
+    userAgent:
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/140.0.7339.98 Safari/604.1',
+    maxTouchPoints: 5,
+  },
+});
+gestureAllowed = true;
+e = new AudioEngine();
+await e.tryResume();
+const desktopMode = audioDiagnostics(e, 1);
+console.log('   桌面版模式的 iPhone   →', desktopMode);
+t('★ 仍然认成 iOS，不是 mac', desktopMode.includes('ua=iOS/Chrome-iOS'), desktopMode);
+t('触摸点数暴露了它是手机', desktopMode.includes('touch5'), desktopMode);
 
 console.log('\n10) 丢弃只发生一次（iOS 每页最多 4 个 AudioContext）');
 gestureAllowed = false;

@@ -57,22 +57,42 @@ function activation() {
   return `${ua.hasBeenActive ? 'been' : 'never'}/${ua.isActive ? 'now' : 'idle'}`;
 }
 
-/** 只取能区分引擎的那几段，不是整条 UA */
+/**
+ * 只取能区分设备和引擎的那几段，不是整条 UA。
+ *
+ * 顺序有讲究：iOS 上开了「请求桌面版网站」之后 UA 里会出现 Macintosh，
+ * 所以必须先看 CriOS/FxiOS/EdgiOS 这类只属于 iOS 的标记，否则会把手机认成 Mac。
+ * 光看 UA 还是可能被改，所以另外报触摸点数和屏幕尺寸 —— 那两个骗不了人。
+ */
 function uaMarker() {
   const ua = navigator.userAgent;
+  const iosBrowser = /CriOS/.test(ua)
+    ? 'Chrome-iOS'
+    : /FxiOS/.test(ua)
+      ? 'Firefox-iOS'
+      : /EdgiOS/.test(ua)
+        ? 'Edge-iOS'
+        : null;
+
   const bits = [];
-  if (/iPhone|iPad|iPod/.test(ua)) bits.push('iOS');
+  if (iosBrowser || /iPhone|iPad|iPod/.test(ua)) bits.push('iOS');
   else if (/Android/.test(ua)) bits.push('Android');
   else if (/Macintosh/.test(ua)) bits.push('mac');
   else if (/Windows/.test(ua)) bits.push('win');
-  if (/CriOS/.test(ua)) bits.push('Chrome-iOS');
-  else if (/FxiOS/.test(ua)) bits.push('Firefox-iOS');
-  else if (/EdgiOS/.test(ua)) bits.push('Edge-iOS');
+
+  if (iosBrowser) bits.push(iosBrowser);
   else if (/Chrome\//.test(ua)) bits.push('Chrome');
   else if (/Firefox\//.test(ua)) bits.push('Firefox');
   else if (/Safari\//.test(ua)) bits.push('Safari');
+
   const ver = ua.match(/(?:iPhone )?OS (\d+[_.]\d+)/);
   if (ver) bits.push(ver[1].replace('_', '.'));
+
+  // UA 能被「请求桌面版」改写，这两个不能
+  const touch = navigator.maxTouchPoints ?? 0;
+  bits.push(`touch${touch}`);
+  if (typeof screen !== 'undefined') bits.push(`${screen.width}x${screen.height}`);
+
   return bits.join('/') || 'unknown';
 }
 
