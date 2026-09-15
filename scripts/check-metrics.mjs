@@ -70,6 +70,32 @@ t('Claude → Cloud', asStr.some((s) => s === 'Claude→Cloud'), asStr.join(', '
 t('句首大写不算专有名词（I / And 没进来）',
   !pn.issues.some((i) => /^(i|and)$/i.test(i.term)));
 
+// 词被拆开是常见的 ASR 错误，插入的那半必须算进来
+const splitWord = codeMetrics({
+  reference: 'Alice: We ship Quicksilver today.',
+  candidate: 'Speaker 1: We ship Quick Silver today.',
+});
+t('Quicksilver → Quick Silver（不是 → Quick）',
+  splitWord.properNouns.issues.some((i) => i.wrong.some((w) => w.got === 'Quick Silver')),
+  JSON.stringify(splitWord.properNouns.issues));
+// 反过来：两个词被并成一个
+const gluedWord = codeMetrics({
+  reference: 'Alice: We ship Acme Robotics today.',
+  candidate: 'Speaker 1: We ship AcmeRobotics today.',
+});
+t('Acme Robotics → AcmeRobotics',
+  gluedWord.properNouns.issues.some((i) => i.term === 'Acme Robotics'),
+  JSON.stringify(gluedWord.properNouns.issues));
+// 漏掉要报成 dropped，而不是「替换成了空」
+const droppedName = codeMetrics({
+  reference: 'Alice: I told Marcus about it.\nBob: Fine.',
+  candidate: 'Speaker 1: Fine.',
+  glossary: 'Marcus',
+});
+t('整句被漏 → 名字记为 dropped 而不是 wrong',
+  droppedName.properNouns.issues.some((i) => i.term === 'Marcus' && i.dropped === 1 && !i.wrong.length),
+  JSON.stringify(droppedName.properNouns.issues));
+
 // ---------------------------------------------------------------- 4
 group('4) 中文：没有大小写，靠 glossary 认专有名词');
 const zh = codeMetrics({

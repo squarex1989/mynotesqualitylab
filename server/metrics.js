@@ -147,20 +147,35 @@ function weighTokens(a, { fillers, keys }) {
   return { weight, tier, total, count };
 }
 
-/** 真值 token 下标 → 它在对齐里的操作 */
+/** 真值 token 下标 → 它在对齐里的操作，以及该操作在 ops 里的位置 */
 function opByRef(ops) {
   const m = new Map();
-  for (const o of ops) if (o.ri >= 0) m.set(o.ri, o);
+  ops.forEach((o, k) => {
+    if (o.ri >= 0) m.set(o.ri, { ...o, k });
+  });
   return m;
 }
 
+// 往两侧最多吃掉这么多个插入。词被拆开（Quicksilver → Quick Silver）时多出来的
+// 那一两个词必须算进来，否则会报成「→ Quick」，看着像是被截断了。
+const GLUE = 3;
+
 /** 一个真值区间对到了候选的哪段文本 */
-function landedOn(a, opMap, start, end) {
-  const his = [];
+function landedOn(a, ops, opMap, start, end) {
+  const ks = [];
   for (let i = start; i < end; i++) {
     const o = opMap.get(i);
-    if (o && o.hi >= 0) his.push(o.hi);
+    if (o) ks.push(o.k);
   }
+  if (!ks.length) return '';
+
+  let lo = Math.min(...ks);
+  let hi = Math.max(...ks);
+  for (let n = 0; n < GLUE && lo > 0 && ops[lo - 1].t === 'ins'; n++) lo--;
+  for (let n = 0; n < GLUE && hi + 1 < ops.length && ops[hi + 1].t === 'ins'; n++) hi++;
+
+  const his = [];
+  for (let k = lo; k <= hi; k++) if (ops[k].hi >= 0) his.push(ops[k].hi);
   return his.length ? join(a.hyp, his) : '';
 }
 
@@ -168,7 +183,7 @@ function landedOn(a, opMap, start, end) {
  * 专有名词和数字的逐条结果。
  * 不打分 —— 直接列出「期望是什么、实际录成了什么、出现几次」。
  */
-function termOutcomes(a, opMap, occurrences) {
+function termOutcomes(a, ops, opMap, occurrences) {
   const byTerm = new Map();
   for (const o of occurrences) {
     const key = o.term.toLowerCase();
@@ -179,16 +194,16 @@ function termOutcomes(a, opMap, occurrences) {
     }
     rec.total++;
 
-    const ops = range(o.start, o.end).map((i) => opMap.get(i)?.t || 'del');
-    if (ops.every((t) => t === 'hit')) {
+    const kinds = range(o.start, o.end).map((i) => opMap.get(i)?.t || 'del');
+    if (kinds.every((t) => t === 'hit')) {
       rec.correct++;
       continue;
     }
-    if (ops.every((t) => t === 'del')) {
+    if (kinds.every((t) => t === 'del')) {
       rec.dropped++;
       continue;
     }
-    const got = landedOn(a, opMap, o.start, o.end);
+    const got = landedOn(a, ops, opMap, o.start, o.end);
     const hit = rec.wrong.find((w) => w.got === got);
     if (hit) hit.count++;
     else rec.wrong.push({ got, count: 1, line: a.ref.line[o.start] + 1 });
@@ -539,9 +554,10 @@ export function codeMetrics({ reference, candidate, glossary = '' }) {
       normalTokens: rw.count.normal,
       weights: WEIGHTS,
     },
-    properNouns: termOutcomes(a, opMap, refNouns),
+    properNouns: termOutcomes(a, a.ops, opMap, refNouns),
     numbers: termOutcomes(
       a,
+      a.ops,
       opMap,
       [...refNum].sort((x, y) => x - y).map((i) => ({
         term: a.ref.raw[i],
