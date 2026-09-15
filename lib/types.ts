@@ -58,10 +58,36 @@ export interface JudgeResult {
   summary: string;
 }
 
+/** 编辑距离算出来的逐字指标，不经过模型 */
+export interface WerMetrics {
+  mode: 'word' | 'char';
+  /** 中文按字算，所以指标名是 CER */
+  metric?: 'WER' | 'CER';
+  refTokens: number;
+  hypTokens: number;
+  substitutions?: number;
+  deletions?: number;
+  insertions?: number;
+  hits?: number;
+  wer?: number;
+  accuracy?: number;
+  substitutionRate?: number;
+  deletionRate?: number;
+  insertionRate?: number;
+  /** 文本太长走了分块近似对齐 */
+  approximate?: boolean;
+  /** 真值为空，算不出来 */
+  unavailable?: boolean;
+}
+
 export interface Comparison {
   product: string;
   transcript: string;
-  result: { judges: JudgeResult[]; failures: { label: string; message: string }[] } | null;
+  result: {
+    wer: WerMetrics;
+    judges: JudgeResult[];
+    failures: { label: string; message: string }[];
+  } | null;
   state: 'idle' | 'scoring' | 'done' | 'failed';
   error: string | null;
   updatedAt: number;

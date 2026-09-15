@@ -6,6 +6,8 @@
 // 用 OpenRouter 的 structured outputs（JSON Schema 强约束）而不是让模型自由输出
 // 再去解析：评分这种东西一旦格式跑偏，解析逻辑会越写越脏，而且出错时很难发现。
 
+import { computeWer, werBriefing } from './wer.js';
+
 const BASE_URL = () =>
   (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
 
@@ -38,13 +40,13 @@ export function isProduct(id) {
   return PRODUCTS.some((p) => p.id === id);
 }
 
-/** 五个评分维度。key 进 JSON Schema，所以只能是这几个固定值。 */
+/**
+ * 交给模型判断的维度。
+ *
+ * 逐字正确率不在这里 —— 那是 WER，用编辑距离算（server/wer.js），
+ * 确定、免费、而且比让模型数东西准。模型只做它擅长的语义判断。
+ */
 export const DIMENSIONS = [
-  {
-    key: 'wordAccuracy',
-    label: 'Word-for-word accuracy',
-    ask: 'Overall word-for-word fidelity to the reference. Consider insertions, deletions and substitutions across the whole transcript, not just a sample.',
-  },
   {
     key: 'missingContent',
     label: 'Key content captured',
@@ -109,6 +111,11 @@ You get two texts:
   REFERENCE — the exact script that was read aloud. This is ground truth.
   CANDIDATE — what the product produced from listening to that reading.
 
+You also get word-level metrics that were computed deterministically by edit
+distance. Treat those numbers as fact — do not re-estimate them, and do not
+contradict them. Use them as evidence: a high deletion rate means content was
+dropped; a high substitution rate means words were misheard.
+
 Grade only the transcription, not the speaking or the content itself. Score each
 dimension 0-100 where 100 is flawless and 0 is unusable. Be specific and cite real
 differences — vague findings are useless. Do not inflate scores to be generous: if
@@ -118,7 +125,7 @@ Note that the candidate may use different speaker labels than the reference
 (e.g. "Speaker 1" instead of "Alice"). That is acceptable as long as the mapping is
 consistent — judge separation and stability, not whether the names match.`;
 
-function userPrompt(reference, candidate) {
+function userPrompt(reference, candidate, werText) {
   return `REFERENCE (ground truth, read aloud):
 """
 ${reference}
@@ -129,7 +136,11 @@ CANDIDATE (what the product transcribed):
 ${candidate}
 """
 
-Grade the candidate on all five dimensions and write the briefing.`;
+COMPUTED WORD-LEVEL METRICS (deterministic, already measured — treat as fact):
+${werText}
+
+Grade the candidate on the four dimensions above and write the briefing.
+The briefing should account for the computed metrics as well as what you found.`;
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -143,7 +154,7 @@ export function apiKeyProblem(key = process.env.OPENROUTER_API_KEY) {
 }
 
 /** 跑一个裁判。失败时抛错，由调用方收集。 */
-async function runJudge(judge, reference, candidate) {
+async function runJudge(judge, reference, candidate, werText) {
   const problem = apiKeyProblem();
   if (problem) throw new Error(problem);
 
@@ -153,7 +164,7 @@ async function runJudge(judge, reference, candidate) {
     reasoning: { effort: 'high' },
     messages: [
       { role: 'system', content: SYSTEM },
-      { role: 'user', content: userPrompt(reference, candidate) },
+      { role: 'user', content: userPrompt(reference, candidate, werText) },
     ],
     response_format: {
       type: 'json_schema',
@@ -234,8 +245,13 @@ async function runJudge(judge, reference, candidate) {
  * @returns {Promise<{judges: object[], failures: object[]}>}
  */
 export async function gradeTranscript({ reference, candidate }) {
+  // 逐字指标先算出来：它既是结果的一部分，也作为事实喂给裁判，
+  // 免得模型自己去估一个和实测对不上的数字。
+  const wer = computeWer(reference, candidate);
+  const werText = werBriefing(wer);
+
   const settled = await Promise.allSettled(
-    JUDGES.map((j) => runJudge(j, reference, candidate))
+    JUDGES.map((j) => runJudge(j, reference, candidate, werText))
   );
 
   const judges = [];
@@ -250,8 +266,9 @@ export async function gradeTranscript({ reference, candidate }) {
       });
   });
 
+  // 裁判全挂了也还有 WER —— 那部分是本地算的，不依赖任何 API
   if (!judges.length) {
-    throw new Error(failures.map((f) => `${f.label}: ${f.message}`).join(' / '));
+    return { wer, judges: [], failures, judgesUnavailable: true };
   }
-  return { judges, failures };
+  return { wer, judges, failures };
 }

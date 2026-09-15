@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useRef, useState } from 'react';
-import type { Comparison, Meta, JudgeResult } from '@/lib/types';
+import type { Comparison, Meta, JudgeResult, WerMetrics } from '@/lib/types';
 
 interface Props {
   meta: Meta | null;
@@ -27,6 +27,68 @@ function scoreColor(n: number | null) {
   return 'var(--err)';
 }
 
+/** 错误率：越低越好，和分数的配色方向相反 */
+function rateColor(n: number) {
+  if (n <= 5) return 'var(--ok)';
+  if (n <= 15) return 'var(--accent)';
+  return 'var(--err)';
+}
+
+const pct = (n: number | undefined) => (typeof n === 'number' ? `${n}%` : '—');
+
+/**
+ * 逐字指标。单独一块、和模型评分分开放 —— 这些数是算出来的，
+ * 不该和模型的判断混在一张表里让人误以为也是估的。
+ */
+function WordMetrics({ w }: { w: WerMetrics }) {
+  if (!w || w.unavailable) return null;
+  const unit = w.mode === 'char' ? 'characters' : 'words';
+  return (
+    <div className="metrics">
+      <div className="spread" style={{ marginBottom: 8 }}>
+        <strong className="tiny">Word-for-word ({w.metric}, measured)</strong>
+        <span className="tiny muted">
+          {w.refTokens.toLocaleString()} reference {unit} → {w.hypTokens?.toLocaleString()} transcribed
+        </span>
+      </div>
+      <div className="metric-row">
+        <div className="metric">
+          <span className="metric-n" style={{ color: rateColor(w.wer ?? 0) }}>{pct(w.wer)}</span>
+          <span className="tiny muted">{w.metric}</span>
+        </div>
+        <div className="metric">
+          <span className="metric-n" style={{ color: scoreColor(w.accuracy ?? null) }}>
+            {pct(w.accuracy)}
+          </span>
+          <span className="tiny muted">exact match</span>
+        </div>
+        <div className="metric">
+          <span className="metric-n" style={{ color: rateColor(w.deletionRate ?? 0) }}>
+            {pct(w.deletionRate)}
+          </span>
+          <span className="tiny muted">deleted ({w.deletions})</span>
+        </div>
+        <div className="metric">
+          <span className="metric-n" style={{ color: rateColor(w.substitutionRate ?? 0) }}>
+            {pct(w.substitutionRate)}
+          </span>
+          <span className="tiny muted">substituted ({w.substitutions})</span>
+        </div>
+        <div className="metric">
+          <span className="metric-n" style={{ color: rateColor(w.insertionRate ?? 0) }}>
+            {pct(w.insertionRate)}
+          </span>
+          <span className="tiny muted">inserted ({w.insertions})</span>
+        </div>
+      </div>
+      <p className="tiny muted" style={{ margin: '8px 0 0' }}>
+        Edit distance against this room&apos;s script, speaker labels and timestamps stripped.
+        {w.approximate && ' Approximate — the transcript was too long to align exactly.'}
+      </p>
+    </div>
+  );
+}
+
 export function CompareModal({
   meta,
   comparisons,
@@ -39,6 +101,7 @@ export function CompareModal({
   const dimensions = meta?.compare.dimensions ?? [];
   const judges = meta?.compare.judges ?? [];
   const keyProblem = meta?.compare.problem;
+  const werOnly = 'WER / deletion rate';
 
   const byProduct = useMemo(
     () => new Map(comparisons.map((c) => [c.product, c])),
@@ -69,6 +132,20 @@ export function CompareModal({
       if (!c?.result) {
         lines.push(c?.transcript ? '(not scored yet)' : '(no transcript)', '');
         continue;
+      }
+      const w = c.result.wer;
+      if (w && !w.unavailable) {
+        const unit = w.mode === 'char' ? 'characters' : 'words';
+        lines.push(
+          `### Word-for-word (${w.metric}, measured by edit distance)`,
+          `- ${w.metric}: ${w.wer}%  |  exact match: ${w.accuracy}%`,
+          `- Deleted: ${w.deletions} (${w.deletionRate}%)`,
+          `- Substituted: ${w.substitutions} (${w.substitutionRate}%)`,
+          `- Inserted: ${w.insertions} (${w.insertionRate}%)`,
+          `- Reference: ${w.refTokens} ${unit}; transcribed: ${w.hypTokens} ${unit}` +
+            (w.approximate ? ' (approximate alignment)' : ''),
+          ''
+        );
       }
       for (const j of c.result.judges) {
         const avg = meanScore(j);
@@ -114,13 +191,15 @@ export function CompareModal({
         </div>
 
         <p className="sub">
-          Graded against this room&apos;s script ({referenceLineCount} lines) by{' '}
+          Graded against this room&apos;s script ({referenceLineCount} lines). Word-for-word
+          accuracy is measured by edit distance; the remaining dimensions are judged by{' '}
           {judges.map((j) => j.label).join(' and ')}.
         </p>
 
         {keyProblem && (
           <p className="tiny" style={{ color: 'var(--err)' }}>
-            {keyProblem} — set it on the server and restart before scoring.
+            {keyProblem} — {werOnly} will still be measured, but the model-judged dimensions
+            will be skipped until you set the key and restart.
           </p>
         )}
 
@@ -172,7 +251,7 @@ export function CompareModal({
                   <button
                     className="small primary"
                     disabled={
-                      scoring || !text.trim() || dirty(p.id) || referenceLineCount === 0 || !!keyProblem
+                      scoring || !text.trim() || dirty(p.id) || referenceLineCount === 0
                     }
                     onClick={() => onScore(p.id)}
                   >
@@ -208,6 +287,9 @@ export function CompareModal({
 
               {c?.result && (
                 <div style={{ marginTop: 12 }}>
+                  <WordMetrics w={c.result.wer} />
+
+                  {c.result.judges.length > 0 && (
                   <table className="scores">
                     <thead>
                       <tr>
@@ -261,6 +343,7 @@ export function CompareModal({
                       </tr>
                     </tbody>
                   </table>
+                  )}
 
                   {c.result.judges.map((j) =>
                     j.summary ? (
