@@ -75,17 +75,23 @@ const splitWord = codeMetrics({
   reference: 'Alice: We ship Quicksilver today.',
   candidate: 'Speaker 1: We ship Quick Silver today.',
 });
+// 对齐要把插入的那半也算进来，否则会得出「→ Quick」，看着像被截断。
+// 拿到完整的 Quick Silver 之后，归一化一比就知道名字其实是对的。
 t('Quicksilver → Quick Silver（不是 → Quick）',
-  splitWord.properNouns.issues.some((i) => i.wrong.some((w) => w.got === 'Quick Silver')),
-  JSON.stringify(splitWord.properNouns.issues));
+  splitWord.properNouns.variants.some((v) =>
+    v.variants.some((x) => x.got === 'Quick Silver')
+  ),
+  JSON.stringify(splitWord.properNouns));
+t('拆开写不算错', splitWord.properNouns.issues.length === 0);
 // 反过来：两个词被并成一个
 const gluedWord = codeMetrics({
   reference: 'Alice: We ship Acme Robotics today.',
   candidate: 'Speaker 1: We ship AcmeRobotics today.',
 });
-t('Acme Robotics → AcmeRobotics',
-  gluedWord.properNouns.issues.some((i) => i.term === 'Acme Robotics'),
-  JSON.stringify(gluedWord.properNouns.issues));
+t('Acme Robotics → AcmeRobotics（并成一个词也认得出）',
+  gluedWord.properNouns.variants.some((v) => v.term === 'Acme Robotics'),
+  JSON.stringify(gluedWord.properNouns));
+t('并起来写也不算错', gluedWord.properNouns.issues.length === 0);
 // 漏掉要报成 dropped，而不是「替换成了空」
 const droppedName = codeMetrics({
   reference: 'Alice: I told Marcus about it.\nBob: Fine.',
@@ -113,6 +119,44 @@ t('没配 glossary 就认不出来（这是已知限制）',
     reference: '张三: 王小明说下周上线。',
     candidate: 'Speaker 1: 王小名说下周上线。',
   }).properNouns.checked === 0);
+
+// ---------------------------------------------------------------- 3b
+group('3b) 名字写法不同 ≠ 名字录错了');
+const variant = (ref, cand, gl = '') =>
+  codeMetrics({ reference: ref, candidate: cand, glossary: gl }).properNouns;
+
+// 复合词被拆开：名字本身是对的
+const split2 = variant(
+  'Priya: We closed NovaLedger today.',
+  'Speaker 1: We closed Nova Ledger today.',
+  'NovaLedger'
+);
+t('★ NovaLedger → Nova Ledger 不算错', split2.issues.length === 0, JSON.stringify(split2.issues));
+t('但记进「写法不同」里，不是悄悄算对',
+  split2.variants[0].variants[0].got === 'Nova Ledger',
+  JSON.stringify(split2.variants));
+
+// 所有格：两条路径都要认 —— 句中大写自动识别，以及 glossary
+t('★ Meridian\'s → Meridian 不算错（自动识别）',
+  variant("Priya: We hope Meridian's team signs.", 'Speaker 1: We hope Meridian team signs.')
+    .issues.length === 0);
+t("glossary 里写 Meridian 也能匹配到 Meridian's",
+  variant("Priya: Meridian's team signs today.", 'Speaker 1: Meridian team signs today.', 'Meridian')
+    .checked === 1);
+
+t('连字符差异不算错',
+  variant('Priya: The Mid-Atlantic deal closed.', 'Speaker 1: The Mid Atlantic deal closed.')
+    .issues.length === 0);
+
+// 归一化之后仍然不同的，照样算错 —— 这是这套东西的意义所在
+const realErr = variant(
+  'Priya: We told Claude and Acme.',
+  'Speaker 1: We told Cloud and Acne.',
+  'Claude\nAcme'
+);
+t('★ Claude → Cloud 仍然算错', realErr.issues.some((i) => i.term === 'Claude'));
+t('★ Acme → Acne 仍然算错', realErr.issues.some((i) => i.term === 'Acme'));
+t('这两个不会被塞进「写法不同」', realErr.variants.length === 0, JSON.stringify(realErr.variants));
 
 // ---------------------------------------------------------------- 4b
 group('4b) 非语音内容不能计入：方括号标注和时间码');
@@ -148,10 +192,15 @@ t('WER 28.6%', noisy.wer.wer === 28.6, `${noisy.wer.wer}`);
 const noisyTerms = noisy.properNouns.issues.map((i) => i.term);
 t('★ [HESITATION]/[LAUGH]/[OVERLAP] 没被当成缩写词',
   !noisyTerms.some((x) => /hesitation|laugh|overlap/i.test(x)), JSON.stringify(noisyTerms));
-t('只报出真正的问题 NovaLedger → Nova Ledger',
-  noisyTerms.length === 1 &&
-    noisy.properNouns.issues[0].wrong.some((w) => w.got === 'Nova Ledger'),
-  JSON.stringify(noisy.properNouns.issues));
+t('NovaLedger → Nova Ledger 只是写法不同，不算错',
+  noisyTerms.length === 0 &&
+    noisy.properNouns.variants.some((v) =>
+      v.variants.some((x) => x.got === 'Nova Ledger')
+    ),
+  JSON.stringify(noisy.properNouns));
+t('★ 标注也不会混进「写法不同」那一列',
+  !noisy.properNouns.variants.some((v) => /hesitation|laugh|overlap/i.test(v.term)),
+  JSON.stringify(noisy.properNouns.variants.map((v) => v.term)));
 t('★ 时间码没被当成数字（只有 30% 里那个 30）', noisy.numbers.checked === 1,
   `${noisy.numbers.checked}`);
 t('数字一个都没错', noisy.numbers.issues.length === 0, JSON.stringify(noisy.numbers.issues));

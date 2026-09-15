@@ -144,6 +144,16 @@ function Terms({ r, title, empty }: { r: TermReport | undefined; title: string; 
           ))}
         </ul>
       )}
+      {/* 写法不同但算对的：复合词被拆开、所有格、连字符 —— 名字本身是对的，
+          不该混在红色的错误列表里，但也得说一声，否则「全对」和肉眼看到的差异对不上 */}
+      {(r.variants ?? []).length > 0 && (
+        <p className="tiny muted" style={{ margin: '6px 0 0' }}>
+          Counted as correct, spelled differently:{' '}
+          {(r.variants ?? [])
+            .map((v) => `${v.term} → ${v.variants.map((x) => x.got).join(' / ')}`)
+            .join('; ')}
+        </p>
+      )}
     </div>
   );
 }
@@ -379,6 +389,10 @@ export function CompareModal({
         if (!rep?.checked) continue;
         out.push(`### ${title} — ${rep.clean}/${rep.checked} correct`);
         if (!rep.issues.length) out.push('- all correct');
+        for (const v of rep.variants ?? [])
+          out.push(
+            `- "${v.term}" spelled as ${v.variants.map((x) => `"${x.got}"`).join(' / ')} — counted as correct`
+          );
         for (const i of rep.issues) {
           const bits = [
             ...i.wrong.map((x) => `→ "${x.got}"${x.count > 1 ? ` ×${x.count}` : ''}`),

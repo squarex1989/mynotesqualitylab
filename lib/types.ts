@@ -98,6 +98,8 @@ export interface TermOutcome {
   correct: number;
   dropped: number;
   wrong: { got: string; count: number; line: number }[];
+  /** 归一化之后一致的写法（NovaLedger vs Nova Ledger）—— 算对，但记下来 */
+  variants: { got: string; count: number }[];
 }
 
 export interface TermReport {
@@ -105,6 +107,7 @@ export interface TermReport {
   occurrences: number;
   clean: number;
   issues: TermOutcome[];
+  variants?: { term: string; variants: { got: string; count: number }[] }[];
 }
 
 export interface SpeakerReport {

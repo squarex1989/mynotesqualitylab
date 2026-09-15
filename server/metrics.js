@@ -77,10 +77,13 @@ const maskOf = (occurrences) => {
 function properNouns(a, { glossary, speakerNames }, segIdx) {
   const occ = [];
 
-  // glossary 和说话人名字：两种模式都按短语匹配
-  const terms = [...new Set([...glossary, ...speakerNames].map((t) => t.toLowerCase()))]
-    .filter((t) => t.length > 0)
-    .sort((x, y) => y.length - x.length);
+  // glossary 和说话人名字：两种模式都按短语匹配。
+  // 顺带展开所有格 —— 脚本里写「Meridian's team」时，glossary 里那个
+  // Meridian 因为边界对不齐（token 是 meridian's）会整个匹配不上。
+  const wanted = [...glossary, ...speakerNames].map((t) => t.toLowerCase()).filter(Boolean);
+  const terms = [
+    ...new Set(wanted.flatMap((t) => (/[a-z0-9]$/.test(t) ? [t, `${t}'s`, `${t}’s`] : [t]))),
+  ].sort((x, y) => y.length - x.length);
   const taken = new Set();
   for (const o of findPhrases(a, terms, segIdx)) {
     // 长短语优先，已经被更长的词占掉的位置不再重复算
@@ -180,6 +183,22 @@ function landedOn(a, ops, opMap, start, end) {
 }
 
 /**
+ * 名字比对用的归一化形式。
+ *
+ * 这几种差别不算把名字录错了：
+ *   NovaLedger → Nova Ledger   复合词被拆开，名字本身是对的
+ *   Meridian's → Meridian      所有格
+ *   Mid-Atlantic → Mid Atlantic 连字符
+ * 而 Claude → Cloud、Acme → Acne 这类归一化之后仍然不同，照样算错。
+ */
+const nameKey = (x) =>
+  String(x)
+    .toLowerCase()
+    .replace(/['’]s\b/g, '') // Meridian's -> Meridian
+    .replace(/['’](?=\s|$)/g, '') // Jones' -> Jones
+    .replace(/[\s\-_.]+/g, '');
+
+/**
  * 专有名词和数字的逐条结果。
  * 不打分 —— 直接列出「期望是什么、实际录成了什么、出现几次」。
  */
@@ -189,7 +208,17 @@ function termOutcomes(a, ops, opMap, occurrences) {
     const key = o.term.toLowerCase();
     let rec = byTerm.get(key);
     if (!rec) {
-      rec = { term: o.term, source: o.source, total: 0, correct: 0, dropped: 0, wrong: [] };
+      rec = {
+        term: o.term,
+        source: o.source,
+        total: 0,
+        correct: 0,
+        dropped: 0,
+        wrong: [],
+        // 归一化之后一致的写法：算对，但记下来，免得界面上「4/4 全对」和
+        // 肉眼看到的差异对不上
+        variants: [],
+      };
       byTerm.set(key, rec);
     }
     rec.total++;
@@ -204,6 +233,13 @@ function termOutcomes(a, ops, opMap, occurrences) {
       continue;
     }
     const got = landedOn(a, ops, opMap, o.start, o.end);
+    if (got && nameKey(got) === nameKey(rec.term)) {
+      rec.correct++;
+      const seen = rec.variants.find((v) => v.got === got);
+      if (seen) seen.count++;
+      else rec.variants.push({ got, count: 1 });
+      continue;
+    }
     const hit = rec.wrong.find((w) => w.got === got);
     if (hit) hit.count++;
     else rec.wrong.push({ got, count: 1, line: a.ref.line[o.start] + 1 });
@@ -216,6 +252,10 @@ function termOutcomes(a, ops, opMap, occurrences) {
     occurrences: all.reduce((s, r) => s + r.total, 0),
     clean: all.length - issues.length,
     issues,
+    // 写法不同但算对的那些，单独列出来
+    variants: all
+      .filter((r) => r.variants.length && !r.dropped && !r.wrong.length)
+      .map((r) => ({ term: r.term, variants: r.variants })),
   };
 }
 
