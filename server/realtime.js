@@ -8,6 +8,7 @@ import {
   upsertDevice,
   resetDevicePresence,
   markDeviceOffline,
+  pruneOfflineDevices,
   renameDevice,
   updateSpeaker,
   randomizeSpeaker,
@@ -32,6 +33,12 @@ import { lookupAudio } from './tts.js';
 
 const PREPARE_TIMEOUT_MS = 15000; // 等设备预加载的上限
 const GO_LEAD_MS = 1200; // 所有设备就绪后再留这么久做最后对齐
+
+// 设备离线超过这么久才清掉 —— 断线重连、切个 App 通常几秒到几十秒就自己好了，
+// 定太短会把正在用的设备从列表里删掉，「Read by」跟着变成未分配，反而添乱。
+const DEVICE_PRUNE_AFTER_MS = Number(process.env.DEVICE_PRUNE_AFTER_MS) || 10 * 60 * 1000;
+// 多久扫一次。扫描本身很轻（一条 SQL），间隔比阈值短很多也无所谓
+const DEVICE_PRUNE_INTERVAL_MS = Number(process.env.DEVICE_PRUNE_INTERVAL_MS) || 2 * 60 * 1000;
 
 /** roomId -> { items, totalMs, pending:Set, timer, started } */
 const sessions = new Map();
@@ -94,6 +101,14 @@ export function attachRealtime(httpServer) {
     if (wasGenerating.get(roomId) && !progress.generating) pushState(io, roomId);
     wasGenerating.set(roomId, progress.generating);
   });
+
+  // 定期清掉离线太久的设备，免得房间的设备列表越用越脏。
+  // 立刻跑一次，别等第一个 interval 才生效。
+  const sweepStaleDevices = () => {
+    for (const roomId of pruneOfflineDevices(DEVICE_PRUNE_AFTER_MS)) broadcast(roomId);
+  };
+  sweepStaleDevices();
+  setInterval(sweepStaleDevices, DEVICE_PRUNE_INTERVAL_MS);
 
   io.on('connection', (socket) => {
     const { roomId: rawRoomId, deviceId, deviceName, hostToken } = socket.handshake.auth || {};

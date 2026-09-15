@@ -250,6 +250,57 @@ export function markDeviceOffline(roomId, deviceId) {
   );
 }
 
+/**
+ * 清掉离线太久的设备 —— 关了网页、锁屏很久没回来、设备就是不再用了。
+ *
+ * 不是一断线就删：Socket.IO 自己的 ping 超时、切个 App、网络抖一下，都会让
+ * `online` 短暂变成 0，几秒到几十秒内几乎总会自己连回来。删得太急会把正在用
+ * 的设备从列表里抹掉，反而添乱。所以只清离线超过 thresholdMs 的那些 —— 上线
+ * 和下线都会刷新 `last_seen`，所以「现在 - last_seen」就是「离线了多久」。
+ *
+ * 删除前先把这台设备身上挂的东西摘掉，不留悬空引用：
+ *   - 分到它的角色改回未分配（界面上「Read by」会显示 unassigned，不会自动
+ *     改派给别的设备 —— 那是下一台设备连上时 autoAssignDevices 该做的事）
+ *   - 环境音设备如果是它，清空
+ *   - 房主设备指针如果是它，清空（这只是展示用的；房主权限走的是 host_token，
+ *     跟这个指针无关，清不清都不影响谁是房主）
+ *
+ * @returns {string[]} 受影响的 roomId（去重），调用方用来决定给哪些房间广播
+ */
+export function pruneOfflineDevices(thresholdMs) {
+  const cutoff = Date.now() - thresholdMs;
+  const stale = db
+    .prepare('SELECT room_id, id FROM devices WHERE online = 0 AND last_seen < ?')
+    .all(cutoff);
+  if (!stale.length) return [];
+
+  const affected = new Set();
+  db.exec('BEGIN');
+  try {
+    for (const { room_id: roomId, id: deviceId } of stale) {
+      db.prepare('UPDATE speakers SET device_id = NULL WHERE room_id = ? AND device_id = ?').run(
+        roomId,
+        deviceId
+      );
+      db.prepare('UPDATE rooms SET ambience_device = NULL WHERE id = ? AND ambience_device = ?').run(
+        roomId,
+        deviceId
+      );
+      db.prepare('UPDATE rooms SET host_device = NULL WHERE id = ? AND host_device = ?').run(
+        roomId,
+        deviceId
+      );
+      db.prepare('DELETE FROM devices WHERE room_id = ? AND id = ?').run(roomId, deviceId);
+      affected.add(roomId);
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+  return [...affected];
+}
+
 export function renameDevice(roomId, deviceId, name) {
   db.prepare('UPDATE devices SET name = ? WHERE room_id = ? AND id = ?').run(
     String(name).slice(0, 40),
