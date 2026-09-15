@@ -92,7 +92,6 @@ export default function Home() {
 
       <div className="card">
         <h2>Create a room</h2>
-        <p className="sub">You'll be the host: upload the transcript, tune the voices, hit start.</p>
         <label className="field" style={{ marginBottom: 12 }}>
           <span className="spread">
             <span>Room name (optional)</span>
