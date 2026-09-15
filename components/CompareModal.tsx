@@ -96,6 +96,9 @@ function Measured({ m }: { m: CodeMetrics }) {
         Weighted counts filler {unit} ×{g.weights.filler} and names, numbers and negations ×
         {g.weights.key} — dropping &ldquo;um&rdquo; barely registers, dropping a name does. This
         script has {g.fillerTokens} filler, {g.normalTokens} ordinary and {g.keyTokens} key {unit}.
+{' '}
+        Speaker labels, timestamps and bracketed annotations like{' '}
+        <code>[LAUGH]</code> are stripped from both sides first — nobody reads those aloud.
         {w.approximate &&
           ' Alignment was approximate — the transcript was too long to align exactly.'}
       </p>

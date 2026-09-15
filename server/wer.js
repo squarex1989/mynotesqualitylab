@@ -17,13 +17,55 @@ const CJK = /[぀-ヿ㐀-䶿一-鿿豈-﫿]/;
 const TS = String.raw`(?:\[|\()?\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?(?:\]|\))?`;
 const SENTENCE_END = /([.!?。！？…]+)/;
 
-/** 拆出「说话人标签」和正文。时间戳一并剥掉。 */
+/*
+ * 非语音内容，两边都要剥掉。
+ *
+ * 不剥的话会从两头污染指标：真值里多出一堆没人念的 token，候选里多出一堆没人
+ * 说的 token。而且这些东西恰好最容易被误判成「关键词」—— [HESITATION] 全大写，
+ * 会被当成缩写词；时间码含数字，会被当成数字。两者都按 3 倍权重算，加权错误率
+ * 于是彻底失真。
+ */
+
+// 方括号标注：[HESITATION] [LAUGH] [OVERLAP] [inaudible] [crosstalk] …
+const ANNOTATION = /\[[^\]\n]{0,120}\]|【[^】\n]{0,120}】/g;
+
+// VTT/SRT 的时间轴行和序号行，整行都不是台词
+const CUE_LINE = /^\s*\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?\s*-{1,3}>\s*\d{1,2}:\d{2}/;
+const SEQ_LINE = /^\s*\d{1,4}\s*$/;
+
+// 三段式时间码（00:35:42）没有歧义，出现在哪儿都剥
+const TS_FULL = /\b\d{1,2}:\d{2}:\d{2}(?:[.,]\d{1,3})?\b/g;
+
+
+// 箭头和长横线的残渣。clean() 特意保留连字符（don't、t-shirt 要留），
+// 所以 --> 会剩下一个 -- token，得在这儿清掉
+const DASH_RUN = /-{2,}>?|<-{2,}/g;
+
+/** 剥掉一行里所有非语音的东西。整行是时间轴或序号的话返回空串。 */
+function scrub(line) {
+  const s = String(line).replace(ANNOTATION, ' ');
+  if (CUE_LINE.test(s) || SEQ_LINE.test(s)) return '';
+  return s.replace(TS_FULL, ' ').replace(DASH_RUN, ' ');
+}
+
+/**
+ * 行首的时间码。
+ *
+ * 两段式（35:42）只在行首剥，不在行尾剥 —— 实际格式里时间码都在行首、方括号里、
+ * 或者 VTT 的时间轴行上，而行尾一个裸的 mm:ss 更可能是台词里真在说时间
+ *（「那就约 10:30」）。宁可漏剥一个时间码，也不要把内容当成时间码吃掉。
+ */
+const TS_LEAD = new RegExp(String.raw`^\s*${TS}\s*[-–—]?\s*`);
+
+/** 拆出「说话人标签」和正文。非语音内容（方括号标注、时间码）一并剥掉。 */
 export function splitLine(line) {
-  let s = line.replace(new RegExp(String.raw`^\s*${TS}\s*[-–—]?\s*`), '');
+  const s = scrub(line).replace(TS_LEAD, '');
+  if (!s.trim()) return { label: null, body: '' };
   // 冒号前是个短的、不含句末标点的片段 —— 那就是说话人标签
   const m = s.match(/^\s*([^:：]{1,40})[:：]\s*/);
   if (m && !/[。！？.!?,，;；]/.test(m[1])) {
-    return { label: m[1].trim(), body: s.slice(m[0].length) };
+    // 标签后面还可能跟一个时间码：「Alice: 35:42 那我们…」
+    return { label: m[1].trim(), body: s.slice(m[0].length).replace(TS_LEAD, '') };
   }
   return { label: null, body: s };
 }
@@ -87,7 +129,10 @@ export function analyze(text) {
 
       let atSentenceStart = true;
       const push = (start, len) => {
-        tokens.push(lower.slice(start, start + len));
+        const text = lower.slice(start, start + len);
+        // 只剩标点的不算 token（连字符和撇号是 clean() 特意保留的）
+        if (!/[\p{L}\p{N}]/u.test(text)) return;
+        tokens.push(text);
         raw.push(cased.slice(start, start + len));
         seg.push(segIdx);
         offset.push(start);

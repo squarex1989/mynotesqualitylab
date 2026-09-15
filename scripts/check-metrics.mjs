@@ -114,6 +114,76 @@ t('没配 glossary 就认不出来（这是已知限制）',
     candidate: 'Speaker 1: 王小名说下周上线。',
   }).properNouns.checked === 0);
 
+// ---------------------------------------------------------------- 4b
+group('4b) 非语音内容不能计入：方括号标注和时间码');
+// 真值 14 词：Was that the NovaLedger plan(5) / Okay we hit 30 MOIC(5) /
+//            And NovaLedger closed Friday(4)
+// 候选 16 词：Nova Ledger 把 NovaLedger 拆成两个词，所以两句各多一个
+// 差异：NovaLedger→Nova 替换 2 次 + Ledger 插入 2 次 = 4/14 = 28.6%
+const noisy = codeMetrics({
+  reference: [
+    'Alice: [HESITATION] Was that the NovaLedger plan?',
+    'Bob: [LAUGH] Okay, we hit 30% MOIC.',
+    'Alice: [OVERLAP] And NovaLedger closed Friday.',
+  ].join('\n'),
+  candidate: [
+    '1',
+    '00:35:42 --> 00:36:20',
+    'Speaker 1: Was that the Nova Ledger plan?',
+    '',
+    '2',
+    '00:36:20 --> 00:37:17',
+    'Speaker 2: Okay, we hit 30% MOIC.',
+    '',
+    '3',
+    '00:37:17 --> 00:39:22',
+    'Speaker 1: And Nova Ledger closed Friday.',
+  ].join('\n'),
+});
+t('真值 14 词（方括号标注没算进去）', noisy.wer.refTokens === 14, `${noisy.wer.refTokens}`);
+t('候选 16 词（时间轴行和序号行没算进去）', noisy.wer.hypTokens === 16, `${noisy.wer.hypTokens}`);
+t('S2 D0 I2', noisy.wer.substitutions === 2 && noisy.wer.deletions === 0 && noisy.wer.insertions === 2,
+  `S${noisy.wer.substitutions} D${noisy.wer.deletions} I${noisy.wer.insertions}`);
+t('WER 28.6%', noisy.wer.wer === 28.6, `${noisy.wer.wer}`);
+const noisyTerms = noisy.properNouns.issues.map((i) => i.term);
+t('★ [HESITATION]/[LAUGH]/[OVERLAP] 没被当成缩写词',
+  !noisyTerms.some((x) => /hesitation|laugh|overlap/i.test(x)), JSON.stringify(noisyTerms));
+t('只报出真正的问题 NovaLedger → Nova Ledger',
+  noisyTerms.length === 1 &&
+    noisy.properNouns.issues[0].wrong.some((w) => w.got === 'Nova Ledger'),
+  JSON.stringify(noisy.properNouns.issues));
+t('★ 时间码没被当成数字（只有 30% 里那个 30）', noisy.numbers.checked === 1,
+  `${noisy.numbers.checked}`);
+t('数字一个都没错', noisy.numbers.issues.length === 0, JSON.stringify(noisy.numbers.issues));
+// 关键词 5 个：NovaLedger ×2、MOIC、30、Friday。语气词 1 个：Okay
+t('关键词正好 5 个（标注和时间码都不在内）', noisy.weighted.keyTokens === 5,
+  `${noisy.weighted.keyTokens}`);
+t('Okay 算语气词', noisy.weighted.fillerTokens === 1, `${noisy.weighted.fillerTokens}`);
+// 12 / 23.1 = 51.9%（5×3 + 8×1 + 1×0.1 = 23.1；错的是 2 个 NovaLedger 和 2 个插入的 Ledger）
+t('加权 51.9%', noisy.weighted.wer === 51.9, `${noisy.weighted.wer}`);
+t('时间轴行没把说话人搞乱', noisy.speakers.attributionAccuracy === 100,
+  `${noisy.speakers.attributionAccuracy}`);
+
+group('4c) 逐类剥离');
+const tk = (x) => analyze(x).tokens;
+t('方括号标注', tk('A: [HESITATION] Was that it?').join(' ') === 'was that it');
+t('中文方括号', tk('张三: 【笑】好。').join('') === '好');
+t('VTT 时间轴行整行丢掉', tk('00:35:42 --> 00:36:20').length === 0);
+t('SRT 序号行整行丢掉', tk('  17  ').length === 0);
+t('行首三段时间码', tk('00:35:42 A: hello there').join(' ') === 'hello there');
+t('说话人标签后面的时间码', tk('A: 35:42 hello there').join(' ') === 'hello there',
+  JSON.stringify(tk('A: 35:42 hello there')));
+t('标签前面的时间码', tk('35:42 A: hello there').join(' ') === 'hello there',
+  JSON.stringify(tk('35:42 A: hello there')));
+// 行尾的裸 mm:ss 不剥 —— 更可能是台词里真在说时间。宁可漏剥，不要吃掉内容。
+t('台词里真在说的时间要留着', tk('A: meet at 10:30').join(' ') === 'meet at 10 30',
+  JSON.stringify(tk('A: meet at 10:30')));
+t('行尾的裸 mm:ss 当成内容', tk('A: hello there 35:42').join(' ') === 'hello there 35 42',
+  JSON.stringify(tk('A: hello there 35:42')));
+t('--> 不会剩下一个 -- token',
+  !tk('A: we shipped --> done').some((x) => /^-+$/.test(x)),
+  JSON.stringify(tk('A: we shipped --> done')));
+
 // ---------------------------------------------------------------- 5
 group('5) 数字');
 const num = codeMetrics({
