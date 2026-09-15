@@ -85,6 +85,9 @@ export default function RoomPage() {
     ? state.speakers.filter((sp) => sp.deviceId === deviceId).reduce((n, sp) => n + sp.lineCount, 0)
     : 0;
   const isAmbienceDevice = state?.settings.ambienceDevice === deviceId;
+  // 有任何产品已经打过分 → 谁都能点进去看；一个都没有 → 还没什么可看的，
+  // 只让房主看到入口（她才能贴转录、发起打分）
+  const hasAnyCompareResult = state?.comparisons.some((c) => c.result) ?? false;
 
   // 手机上没法看控制台，这一行要能一键复制出来
   const diagLine =
@@ -132,14 +135,23 @@ export default function RoomPage() {
             {state?.title ? state.title : 'Room code'}
             {copied && <span style={{ marginLeft: 8 }}>copied</span>}
           </div>
-          <button
-            className="ghost"
-            onClick={copy}
-            style={{ border: 'none', padding: 0, background: 'none' }}
-            title="Click to copy"
-          >
-            <span className="roomcode">{roomId}</span>
-          </button>
+          <div className="row" style={{ gap: 14 }}>
+            <button
+              className="ghost"
+              onClick={copy}
+              style={{ border: 'none', padding: 0, background: 'none' }}
+              title="Click to copy"
+            >
+              <span className="roomcode">{roomId}</span>
+            </button>
+            {/* 唯一的 Compare 入口。没有任何产品打过分之前只对房主可见 ——
+                她才能贴转录、发起打分；一旦有分了，谁都能看。 */}
+            {state && (hasAnyCompareResult || isHost) && (
+              <button className="small ghost" onClick={() => setCompareOpen(true)}>
+                {hasAnyCompareResult ? 'View the result' : 'Upload the result'}
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="row" style={{ marginLeft: 'auto' }}>
@@ -158,11 +170,6 @@ export default function RoomPage() {
           )}
           {isHost && <span className="pill on">host</span>}
           {state?.status === 'playing' && <span className="pill on">▶ reading</span>}
-          {state && (
-            <button className="pill" onClick={() => setCompareOpen(true)}>
-              Compare
-            </button>
-          )}
           <Link href="/" className="pill">
             Home
           </Link>
