@@ -63,7 +63,9 @@ FakeAudioContext.created = 0;
 
 globalThis.window = { AudioContext: FakeAudioContext };
 
-const { AudioEngine, reportedAudioState } = await import('../lib/audioEngine.ts');
+const { AudioEngine, reportedAudioState, audioDiagnostics } = await import(
+  '../lib/audioEngine.ts'
+);
 
 let pass = 0;
 let fail = 0;
@@ -158,6 +160,70 @@ await new Promise((r) => setTimeout(r, 20));
 t('★ start() 把它恢复了（不是默默排在冻结时钟上）', e.ctx.state === 'running',
   e.ctx.state);
 e.stop();
+
+// ---------------------------------------------------------------- 9
+console.log('\n9) 诊断行：每种失败模式都要能从字符串里分辨出来');
+resumeLagMs = 0;
+
+// (a) 从来没有手势
+gestureAllowed = false;
+e = new AudioEngine();
+await e.tryResume();
+const a = audioDiagnostics(e, 0);
+console.log('   (a) 没有手势          →', a);
+t('(a) 报出 resume 被拒', a.includes('rejects=1'), a);
+t('(a) gestures=0', a.includes('gestures=0'), a);
+t('(a) ever=no', a.includes('ever=no'), a);
+
+// (b) 手势收到了，resume 也没抛错，但状态迟迟不翻 —— 被我们等超时
+gestureAllowed = true;
+resumeLagMs = 9000;
+e = new AudioEngine();
+await e.tryResume();
+const b = audioDiagnostics(e, 3);
+console.log('   (b) 状态始终不翻      →', b);
+t('(b) 报出 timeout 而不是 reject', b.includes('timeouts=1') && !b.includes('rejects='), b);
+t('(b) 手势数记下来了', b.includes('gestures=3'), b);
+
+// (c) iOS 的 AudioContext 配额耗尽，连创建都失败
+resumeLagMs = 0;
+const RealCtor = globalThis.window.AudioContext;
+globalThis.window.AudioContext = class {
+  constructor() {
+    throw new Error('InvalidStateError: too many AudioContexts');
+  }
+};
+e = new AudioEngine();
+t('(c) 创建失败时 tryResume 返回 false 而不是抛错', (await e.tryResume()) === false);
+const c = audioDiagnostics(e, 1);
+console.log('   (c) 配额耗尽          →', c);
+t('(c) state=none', c.includes('state=none'), c);
+t('(c) 报出构造失败', c.includes('new AudioContext'), c);
+t('(c) ctxs=0', c.includes('ctxs=0'), c);
+globalThis.window.AudioContext = RealCtor;
+
+// (d) 一切正常
+gestureAllowed = true;
+e = new AudioEngine();
+await e.tryResume();
+const d = audioDiagnostics(e, 1);
+console.log('   (d) 正常解锁          →', d);
+t('(d) state=running ever=yes', d.includes('state=running') && d.includes('ever=yes'), d);
+t('(d) 没有任何错误字段', !d.includes('rejects=') && !d.includes('timeouts=') && !d.includes('last='), d);
+
+console.log('\n10) 丢弃只发生一次（iOS 每页最多 4 个 AudioContext）');
+gestureAllowed = false;
+e = new AudioEngine();
+await e.tryResume();
+e.discardIfLocked();
+const after1 = e.diag.contexts;
+await e.tryResume();
+e.discardIfLocked();
+await e.tryResume();
+e.discardIfLocked();
+t('反复探测失败也不会无限创建 context', e.diag.contexts <= after1 + 1,
+  `创建了 ${e.diag.contexts} 个`);
+t('丢弃计数封顶在 1', e.diag.discarded === 1, `${e.diag.discarded}`);
 
 console.log(`\n${pass} 项通过，${fail} 项失败\n`);
 process.exit(fail ? 1 : 0);

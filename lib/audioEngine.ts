@@ -5,8 +5,9 @@ import type { ScheduleItem } from './types';
 
 const LOOKAHEAD_SEC = 20; // 提前这么久把音频挂到 Web Audio 的时间线上
 const PREFETCH_AHEAD = 8; // 窗口之外再预解码几条，滚动向前
-// resume() 之后等状态落定的上限：WebKit 上状态翻成 running 会晚于 resume() 返回
-const SETTLE_MS = 400;
+// resume() 之后等状态落定的上限：WebKit 上状态翻成 running 会晚于 resume() 返回。
+// 给足一点 —— 等一秒再报「被拦住了」无所谓，等不够就会把成功误判成失败。
+const SETTLE_MS = 1000;
 
 type Tracked = ScheduleItem & { _scheduled?: boolean; _done?: boolean };
 
@@ -21,6 +22,32 @@ type Tracked = ScheduleItem & { _scheduled?: boolean; _done?: boolean };
 export function reportedAudioState(engine: AudioEngine): 'ready' | 'blocked' {
   return engine.unlocked || engine.everUnlocked ? 'ready' : 'blocked';
 }
+
+/**
+ * 一行诊断，直接显示在设备自己的界面上。
+ *
+ * iOS 上「解锁不了」有好几种原因，从外部完全分不清：手势事件没收到？resume()
+ * 被拒？状态翻得太慢被等超时？还是 AudioContext 配额耗尽连创建都失败？
+ * 让设备自己把这些报出来，比继续推断快得多。
+ */
+export function audioDiagnostics(engine: AudioEngine, gestures: number) {
+  const d = engine.diag;
+  const bits = [
+    `state=${engine.ctxState}`,
+    `ever=${engine.everUnlocked ? 'yes' : 'no'}`,
+    `tries=${d.attempts}`,
+    `ctxs=${d.contexts}`,
+    `gestures=${gestures}`,
+  ];
+  if (d.resumeRejects) bits.push(`rejects=${d.resumeRejects}`);
+  if (d.timeouts) bits.push(`timeouts=${d.timeouts}`);
+  if (d.discarded) bits.push(`dropped=${d.discarded}`);
+  if (d.lastError) bits.push(`last=${d.lastError}`);
+  return bits.join('  ');
+}
+
+const errText = (err: unknown) =>
+  err instanceof Error ? `${err.name}: ${err.message}`.slice(0, 120) : String(err).slice(0, 120);
 
 /**
  * 用 Web Audio 而不是 <audio> 播放：source.start(when) 是采样级精度的，
@@ -39,6 +66,24 @@ export class AudioEngine {
 
   private ever = false;
   private stateWatchers = new Set<() => void>();
+
+  /**
+   * 诊断计数。iOS 上解锁失败的原因很难从外部看出来（是手势没收到？resume 被拒？
+   * 还是状态翻得太慢被我们等超时了？），所以把这些都记下来显示到界面上。
+   */
+  readonly diag = {
+    contexts: 0, // 创建过几个 AudioContext（iOS 每页上限 4 个）
+    attempts: 0, // tryResume 被调用了几次
+    resumeRejects: 0, // resume() 抛错几次（没有手势时的正常表现）
+    timeouts: 0, // resume() 没抛错但状态始终没翻成 running
+    discarded: 0,
+    lastError: '',
+  };
+
+  /** AudioContext 当前的状态，没有 context 时是 none */
+  get ctxState() {
+    return this.ctx ? this.ctx.state : 'none';
+  }
 
   /** 此刻能不能真的出声 */
   get unlocked() {
@@ -62,16 +107,28 @@ export class AudioEngine {
     return () => this.stateWatchers.delete(fn);
   }
 
-  private context() {
+  /** 可能返回 null —— iOS 每页最多 4 个 AudioContext，超了构造函数会抛 */
+  private context(): AudioContext | null {
     if (!this.ctx) {
-      const Ctor = window.AudioContext || (window as any).webkitAudioContext;
-      this.ctx = new Ctor({ latencyHint: 'interactive' });
-      const notify = () => this.stateWatchers.forEach((fn) => fn());
-      this.ctx!.addEventListener?.('statechange', notify);
-      // 老 Safari 只有 onstatechange
-      if (!this.ctx!.addEventListener) (this.ctx as any).onstatechange = notify;
+      try {
+        const Ctor = window.AudioContext || (window as any).webkitAudioContext;
+        if (!Ctor) {
+          this.diag.lastError = 'no AudioContext in this browser';
+          return null;
+        }
+        this.ctx = new Ctor({ latencyHint: 'interactive' });
+        this.diag.contexts++;
+        const notify = () => this.stateWatchers.forEach((fn) => fn());
+        this.ctx!.addEventListener?.('statechange', notify);
+        // 老 Safari 只有 onstatechange
+        if (!this.ctx!.addEventListener) (this.ctx as any).onstatechange = notify;
+      } catch (err) {
+        this.diag.lastError = `new AudioContext: ${errText(err)}`;
+        this.ctx = null;
+        return null;
+      }
     }
-    return this.ctx!;
+    return this.ctx;
   }
 
   /**
@@ -81,7 +138,10 @@ export class AudioEngine {
    * 新建一个反而更可靠。已经 running 过的不动 —— 那里面挂着排好期的音频。
    */
   discardIfLocked() {
-    if (!this.ctx || this.ever || this.running) return;
+    // 只丢一次。iOS 每页最多 4 个 AudioContext，反复创建/关闭会把配额耗光，
+    // 之后 new AudioContext() 直接抛错 —— 那比原来的问题更糟。
+    if (!this.ctx || this.ever || this.running || this.diag.discarded > 0) return;
+    this.diag.discarded++;
     const dying = this.ctx;
     this.ctx = null;
     void dying.close().catch(() => {});
@@ -96,15 +156,23 @@ export class AudioEngine {
    * 不会抛错、也不会有副作用。
    */
   async tryResume(): Promise<boolean> {
+    this.diag.attempts++;
     const ctx = this.context();
+    if (!ctx) return false;
+
     try {
       if (ctx.state !== 'running') await ctx.resume();
-    } catch {
-      /* 没有手势时浏览器会拒绝，属于预期 */
+    } catch (err) {
+      // 没有手势时浏览器会拒绝，属于预期
+      this.diag.resumeRejects++;
+      this.diag.lastError = `resume: ${errText(err)}`;
     }
     // WebKit 上 resume() 可能先 resolve、状态稍后才翻成 running，
     // 立刻去读 state 会误判成失败
-    if (!(await this.settle(ctx, SETTLE_MS))) return false;
+    if (!(await this.settle(ctx, SETTLE_MS))) {
+      this.diag.timeouts++;
+      return false;
+    }
 
     this.ever = true;
     // 播一段无声，彻底解锁 iOS/Safari

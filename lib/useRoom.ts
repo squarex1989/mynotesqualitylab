@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
-import { AudioEngine, reportedAudioState } from './audioEngine';
+import { AudioEngine, reportedAudioState, audioDiagnostics } from './audioEngine';
 import { AmbiencePlayer } from './ambience';
 import { getDeviceId, getDeviceName, getHostToken, setDeviceName } from './identity';
 import type {
@@ -53,6 +53,10 @@ export function useRoom(roomId: string) {
   // socket 可能比探测先连上、也可能后连上，两边都要能把结果送出去。
   // 'checking' 期间什么都不报 —— 提前报 false 会让别人的界面先闪一下「audio blocked」。
   const audioStateRef = useRef<AudioState>('checking');
+  // 这台设备自己看得到的诊断行。iOS 上解锁失败的原因从外部分辨不出来，
+  // 只能让设备自己报。
+  const [audioDiag, setAudioDiag] = useState('');
+  const gestureCountRef = useRef(0);
   const [ambienceStatus, setAmbienceStatus] = useState<{
     isAmbienceDevice: boolean;
     ready: boolean;
@@ -67,6 +71,7 @@ export function useRoom(roomId: string) {
     const next = reportedAudioState(engine);
     audioStateRef.current = next;
     setAudioState(next);
+    setAudioDiag(audioDiagnostics(engine, gestureCountRef.current));
     socketRef.current?.emit('device:audio', { unlocked: next === 'ready' });
   }, []);
 
@@ -190,7 +195,9 @@ export function useRoom(roomId: string) {
     };
 
     const onGesture = () => {
+      gestureCountRef.current++;
       if (!engine.unlocked) void attempt(true);
+      else syncAudioState();
     };
     const events: (keyof DocumentEventMap)[] = ['pointerdown', 'keydown', 'touchstart'];
     events.forEach((e) => document.addEventListener(e, onGesture, true));
@@ -382,6 +389,7 @@ export function useRoom(roomId: string) {
     currentIdx,
     activeIdxs,
     audioState,
+    audioDiag,
     audioUnlocked: audioState === 'ready',
     unlockAudio,
     ambienceHostRef,

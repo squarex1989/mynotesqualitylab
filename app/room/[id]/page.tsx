@@ -42,6 +42,7 @@ export default function RoomPage() {
     currentIdx,
     activeIdxs,
     audioState,
+    audioDiag,
     unlockAudio,
     ambienceHostRef,
     ambienceStatus,
@@ -126,6 +127,12 @@ export default function RoomPage() {
           </span>
           <button onClick={unlockAudio}>Enable audio</button>
         </div>
+      )}
+
+      {audioDiag && (
+        <p className="tiny muted" style={{ fontFamily: 'var(--mono)', margin: '0 0 10px' }}>
+          audio on this device — {audioDiag}
+        </p>
       )}
 
       {ambienceStatus.error && (
