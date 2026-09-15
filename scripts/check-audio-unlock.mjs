@@ -142,5 +142,22 @@ const waited = Date.now() - t1;
 t(`在 400ms 上限附近就放弃了（${waited}ms）`, waited >= 380 && waited < 1200, `${waited}`);
 t('上报 blocked', reportedAudioState(e) === 'blocked');
 
+// ---------------------------------------------------------------- 8
+console.log('\n8) 开播时 context 被挂起：必须先恢复，否则排在冻结的时钟上');
+resumeLagMs = 0;
+gestureAllowed = true;
+e = new AudioEngine();
+await e.tryResume();
+t('先解锁成功', e.unlocked === true);
+e.ctx.systemSuspend();
+t('模拟静置被挂起', e.ctx.state === 'suspended');
+// prepare 设好 token 和条目，然后开播
+await e.prepare('tok', [{ idx: 0, hash: 'h', startMs: 0, durationMs: 1000, volume: 1 }]);
+e.start('tok', Date.now() + 1000);
+await new Promise((r) => setTimeout(r, 20));
+t('★ start() 把它恢复了（不是默默排在冻结时钟上）', e.ctx.state === 'running',
+  e.ctx.state);
+e.stop();
+
 console.log(`\n${pass} 项通过，${fail} 项失败\n`);
 process.exit(fail ? 1 : 0);

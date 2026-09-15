@@ -183,6 +183,9 @@ export class AudioEngine {
   /** @param startAtLocalMs 换算到本机时钟后的开播时刻（epoch ms） */
   start(token: string, startAtLocalMs: number) {
     if (!this.ctx || token !== this.token) return;
+    // 兜底：挂起状态下 currentTime 不推进，排上去的东西永远不会响。
+    // 正常情况下 prepare 阶段已经恢复过了，这里只是防最后一刻又被挂起。
+    if (this.ctx.state !== 'running') void this.ctx.resume().catch(() => {});
     this.running = true;
     const deltaSec = (startAtLocalMs - Date.now()) / 1000;
     this.originCtxTime = this.ctx.currentTime + deltaSec;

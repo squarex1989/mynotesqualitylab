@@ -60,6 +60,16 @@ export function useRoom(roomId: string) {
     error: string | null;
   }>({ isAmbienceDevice: false, ready: false, armed: false, error: null });
 
+  /** 把当前声音状态同步到界面和房间。解锁过就算 ready —— 见 reportedAudioState。 */
+  const syncAudioState = useCallback(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    const next = reportedAudioState(engine);
+    audioStateRef.current = next;
+    setAudioState(next);
+    socketRef.current?.emit('device:audio', { unlocked: next === 'ready' });
+  }, []);
+
   const pushToast = useCallback((kind: Toast['kind'], message: string) => {
     const id = Date.now() + Math.random();
     setToasts((prev) => [...prev.slice(-4), { id, kind, message }]);
@@ -167,13 +177,6 @@ export function useRoom(roomId: string) {
     if (!engine) return;
     let armed = false;
 
-    const sync = () => {
-      const next: AudioState = reportedAudioState(engine);
-      audioStateRef.current = next;
-      setAudioState(next);
-      socketRef.current?.emit('device:audio', { unlocked: next === 'ready' });
-    };
-
     const attempt = async (fromGesture: boolean) => {
       const okNow = await engine.tryResume();
       if (okNow && fromGesture && !armed) {
@@ -182,7 +185,7 @@ export function useRoom(roomId: string) {
       }
       // 没解锁成功的 context 在 iOS 上可能已经废了，丢掉，下次手势里重新建
       if (!okNow && !fromGesture) engine.discardIfLocked();
-      sync();
+      syncAudioState();
       return okNow;
     };
 
@@ -198,7 +201,7 @@ export function useRoom(roomId: string) {
     document.addEventListener('visibilitychange', onVisible);
 
     // 挂起/恢复不一定由我们触发（来电、系统回收），所以直接听 context 的状态
-    const offState = engine.onStateChange(sync);
+    const offState = engine.onStateChange(syncAudioState);
 
     void attempt(false);
 
@@ -207,7 +210,7 @@ export function useRoom(roomId: string) {
       document.removeEventListener('visibilitychange', onVisible);
       offState();
     };
-  }, []);
+  }, [syncAudioState]);
 
   /* ---------------- 进入准备阶段：预加载自己的那部分 ---------------- */
   const prepareLocal = useCallback(
@@ -217,6 +220,18 @@ export function useRoom(roomId: string) {
       const isAmbienceDevice = payload.ambience?.deviceId === myId;
 
       setAmbienceStatus((s) => ({ ...s, isAmbienceDevice }));
+
+      // 开播前必须主动恢复一次，不能只是检查。
+      //
+      // 手机在房主配置的那几分钟里是静置的，AudioContext 早被挂起了。挂起状态下
+      // ctx.currentTime 是冻结的，source.start(when) 全都排在一个不会推进的时钟
+      // 上 —— 结果是「排期看着正常，一声不出」。而角色试听用的是 <audio> 元素，
+      // 那是另一条解锁路径，所以试听有声、真念没声。
+      //
+      // 这时没有用户手势，但页面之前已经交互过（sticky activation），
+      // resume() 通常直接就成了。
+      await engine.tryResume();
+      syncAudioState();
 
       const jobs: Promise<unknown>[] = [];
 
@@ -241,7 +256,7 @@ export function useRoom(roomId: string) {
       await Promise.allSettled(jobs);
       socketRef.current?.emit('play:ready', { token: payload.token });
     },
-    [pushToast]
+    [pushToast, syncAudioState]
   );
 
   /* ---------------- 播放进度 ---------------- */

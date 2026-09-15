@@ -6,6 +6,7 @@ import {
   getLines,
   getSpeakers,
   upsertDevice,
+  resetDevicePresence,
   markDeviceOffline,
   renameDevice,
   updateSpeaker,
@@ -38,6 +39,19 @@ const sessions = new Map();
 /** `${roomId}:${deviceId}` -> 这台设备有没有解锁过 AudioContext（只存内存，重启即忘） */
 const audioReady = new Map();
 
+/**
+ * `${roomId}:${deviceId}` -> 这台设备当前活着的 socket id 集合。
+ *
+ * 一台设备同时存在多个 socket 是常态，不是异常：手机切网络或切后台时，新 socket
+ * 会立刻连上，而旧 socket 要等 Socket.IO 的 ping 超时（默认最长 45 秒）才会触发
+ * disconnect。如果只按 deviceId 记在线状态，那个迟到的 disconnect 会把刚连上的
+ * 设备又标成离线，而且再也不会有人把它改回来 —— 界面显示 offline，房间还会因此
+ * 把它的角色改派给别的机器，于是这台设备真念的时候一声不出。
+ *
+ * 所以按 socket 计数，最后一个断开才算离线。
+ */
+const liveSockets = new Map();
+
 function snapshot(roomId) {
   const state = roomState(roomId);
   if (!state) return null;
@@ -55,6 +69,10 @@ function pushState(io, roomId) {
 }
 
 export function attachRealtime(httpServer) {
+  // 进程刚起来，一个 socket 都没有 —— 但 DB 里可能还留着上次退出时的 online=1。
+  // 不清掉的话，每次部署重启后界面会显示一屋子在线设备，其实全都没连。
+  resetDevicePresence();
+
   const io = new Server(httpServer, {
     path: '/socket.io',
     maxHttpBufferSize: 4e6,
@@ -92,6 +110,11 @@ export function attachRealtime(httpServer) {
 
     socket.data = { roomId, deviceId, isHost };
     socket.join(roomId);
+
+    const liveKey = `${roomId}:${deviceId}`;
+    const live = liveSockets.get(liveKey) || new Set();
+    live.add(socket.id);
+    liveSockets.set(liveKey, live);
 
     upsertDevice(roomId, { id: deviceId, name: deviceName, isHost });
 
@@ -298,7 +321,14 @@ export function attachRealtime(httpServer) {
     });
 
     socket.on('disconnect', () => {
-      markDeviceOffline(roomId, deviceId);
+      // 只有这台设备最后一个 socket 也走了才算离线。旧 socket 的超时断开
+      // 不能把已经重连上来的同一台设备标成离线。
+      const still = liveSockets.get(liveKey);
+      still?.delete(socket.id);
+      if (!still || still.size === 0) {
+        liveSockets.delete(liveKey);
+        markDeviceOffline(roomId, deviceId);
+      }
       const session = sessions.get(roomId);
       if (session && !session.started && session.pending.delete(deviceId) && session.pending.size === 0) {
         go(io, roomId);

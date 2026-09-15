@@ -234,6 +234,14 @@ export function upsertDevice(roomId, { id, name, isHost }) {
   }
 }
 
+/**
+ * 把所有设备标成离线。进程启动时调用 —— 在线状态是内存里那些 socket 的投影，
+ * 重启之后 DB 里存的那份必然是陈旧的。
+ */
+export function resetDevicePresence() {
+  db.prepare('UPDATE devices SET online = 0').run();
+}
+
 export function markDeviceOffline(roomId, deviceId) {
   db.prepare('UPDATE devices SET online = 0, last_seen = ? WHERE room_id = ? AND id = ?').run(
     Date.now(),
