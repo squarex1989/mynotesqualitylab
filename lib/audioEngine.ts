@@ -38,12 +38,42 @@ export function audioDiagnostics(engine: AudioEngine, gestures: number) {
     `tries=${d.attempts}`,
     `ctxs=${d.contexts}`,
     `gestures=${gestures}`,
+    // 页面有没有「粘性激活」。WebKit 不实现这个 API，所以 n/a 本身也是信息 ——
+    // 它说明底层引擎是 WebKit（iOS 上的 Chrome 也是），而不是真 Chromium。
+    `active=${activation()}`,
   ];
+  if (d.ctor && d.ctor !== 'AudioContext') bits.push(`ctor=${d.ctor}`);
   if (d.resumeRejects) bits.push(`rejects=${d.resumeRejects}`);
   if (d.timeouts) bits.push(`timeouts=${d.timeouts}`);
   if (d.discarded) bits.push(`dropped=${d.discarded}`);
   if (d.lastError) bits.push(`last=${d.lastError}`);
+  bits.push(`ua=${uaMarker()}`);
   return bits.join('  ');
+}
+
+function activation() {
+  const ua = (navigator as any).userActivation;
+  if (!ua) return 'n/a';
+  return `${ua.hasBeenActive ? 'been' : 'never'}/${ua.isActive ? 'now' : 'idle'}`;
+}
+
+/** 只取能区分引擎的那几段，不是整条 UA */
+function uaMarker() {
+  const ua = navigator.userAgent;
+  const bits = [];
+  if (/iPhone|iPad|iPod/.test(ua)) bits.push('iOS');
+  else if (/Android/.test(ua)) bits.push('Android');
+  else if (/Macintosh/.test(ua)) bits.push('mac');
+  else if (/Windows/.test(ua)) bits.push('win');
+  if (/CriOS/.test(ua)) bits.push('Chrome-iOS');
+  else if (/FxiOS/.test(ua)) bits.push('Firefox-iOS');
+  else if (/EdgiOS/.test(ua)) bits.push('Edge-iOS');
+  else if (/Chrome\//.test(ua)) bits.push('Chrome');
+  else if (/Firefox\//.test(ua)) bits.push('Firefox');
+  else if (/Safari\//.test(ua)) bits.push('Safari');
+  const ver = ua.match(/(?:iPhone )?OS (\d+[_.]\d+)/);
+  if (ver) bits.push(ver[1].replace('_', '.'));
+  return bits.join('/') || 'unknown';
 }
 
 const errText = (err: unknown) =>
@@ -77,6 +107,7 @@ export class AudioEngine {
     resumeRejects: 0, // resume() 抛错几次（没有手势时的正常表现）
     timeouts: 0, // resume() 没抛错但状态始终没翻成 running
     discarded: 0,
+    ctor: '',
     lastError: '',
   };
 
@@ -116,6 +147,7 @@ export class AudioEngine {
           this.diag.lastError = 'no AudioContext in this browser';
           return null;
         }
+        this.diag.ctor = window.AudioContext ? 'AudioContext' : 'webkitAudioContext';
         this.ctx = new Ctor({ latencyHint: 'interactive' });
         this.diag.contexts++;
         const notify = () => this.stateWatchers.forEach((fn) => fn());

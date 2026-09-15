@@ -62,6 +62,15 @@ class FakeAudioContext extends EventTarget {
 FakeAudioContext.created = 0;
 
 globalThis.window = { AudioContext: FakeAudioContext };
+// 诊断行要读 navigator，模拟成 iPhone 上的 Chrome —— 和实际出问题的那台一样。
+// Node 自带一个只读的 navigator，得用 defineProperty 覆盖。
+Object.defineProperty(globalThis, 'navigator', {
+  configurable: true,
+  value: {
+    userAgent:
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/140.0.7339.98 Mobile/15E148 Safari/604.1',
+  },
+});
 
 const { AudioEngine, reportedAudioState, audioDiagnostics } = await import(
   '../lib/audioEngine.ts'
@@ -210,6 +219,8 @@ const d = audioDiagnostics(e, 1);
 console.log('   (d) 正常解锁          →', d);
 t('(d) state=running ever=yes', d.includes('state=running') && d.includes('ever=yes'), d);
 t('(d) 没有任何错误字段', !d.includes('rejects=') && !d.includes('timeouts=') && !d.includes('last='), d);
+t('(d) 认出是 iPhone 上的 Chrome', d.includes('ua=iOS/Chrome-iOS/18.5'), d);
+t('(d) WebKit 没有 userActivation → n/a 本身也是信息', d.includes('active=n/a'), d);
 
 console.log('\n10) 丢弃只发生一次（iOS 每页最多 4 个 AudioContext）');
 gestureAllowed = false;
