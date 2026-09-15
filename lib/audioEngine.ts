@@ -5,8 +5,22 @@ import type { ScheduleItem } from './types';
 
 const LOOKAHEAD_SEC = 20; // 提前这么久把音频挂到 Web Audio 的时间线上
 const PREFETCH_AHEAD = 8; // 窗口之外再预解码几条，滚动向前
+// resume() 之后等状态落定的上限：WebKit 上状态翻成 running 会晚于 resume() 返回
+const SETTLE_MS = 400;
 
 type Tracked = ScheduleItem & { _scheduled?: boolean; _done?: boolean };
+
+/**
+ * 上报给房间的声音状态。
+ *
+ * 「此刻能不能播」和「要不要提示用户」是两件事：手机上 AudioContext 会被反复挂起
+ * （切后台、锁屏、切 App 都会），但只要解锁过一次，用户随手碰一下页面就恢复了 ——
+ * 这种情况不该报成 blocked，否则设备列表会永远卡在「audio blocked」，而声音其实
+ * 出得来。真正决定能不能播的地方用实时的 engine.unlocked。
+ */
+export function reportedAudioState(engine: AudioEngine): 'ready' | 'blocked' {
+  return engine.unlocked || engine.everUnlocked ? 'ready' : 'blocked';
+}
 
 /**
  * 用 Web Audio 而不是 <audio> 播放：source.start(when) 是采样级精度的，
@@ -23,16 +37,54 @@ export class AudioEngine {
   private token = '';
   private running = false;
 
+  private ever = false;
+  private stateWatchers = new Set<() => void>();
+
+  /** 此刻能不能真的出声 */
   get unlocked() {
     return this.ctx !== null && this.ctx.state === 'running';
+  }
+
+  /**
+   * 这台设备是否曾经解锁成功过。
+   *
+   * 手机上 AudioContext 会被反复挂起（切后台、锁屏、切 App），但只要解锁过一次，
+   * 之后用户随便碰一下页面就会自己恢复 —— 不需要再提示。所以「当前是否 running」
+   * 用来决定能不能播，「曾不曾解锁过」用来决定要不要提示。
+   */
+  get everUnlocked() {
+    return this.ever;
+  }
+
+  /** 订阅 AudioContext 自己的状态变化（挂起、恢复、iOS 的 interrupted） */
+  onStateChange(fn: () => void) {
+    this.stateWatchers.add(fn);
+    return () => this.stateWatchers.delete(fn);
   }
 
   private context() {
     if (!this.ctx) {
       const Ctor = window.AudioContext || (window as any).webkitAudioContext;
       this.ctx = new Ctor({ latencyHint: 'interactive' });
+      const notify = () => this.stateWatchers.forEach((fn) => fn());
+      this.ctx!.addEventListener?.('statechange', notify);
+      // 老 Safari 只有 onstatechange
+      if (!this.ctx!.addEventListener) (this.ctx as any).onstatechange = notify;
     }
     return this.ctx!;
+  }
+
+  /**
+   * 没解锁成功就把这个 context 丢掉。
+   *
+   * iOS 上在用户手势之外创建的 AudioContext 有时再也 resume 不起来，下次手势里
+   * 新建一个反而更可靠。已经 running 过的不动 —— 那里面挂着排好期的音频。
+   */
+  discardIfLocked() {
+    if (!this.ctx || this.ever || this.running) return;
+    const dying = this.ctx;
+    this.ctx = null;
+    void dying.close().catch(() => {});
   }
 
   /**
@@ -45,26 +97,44 @@ export class AudioEngine {
    */
   async tryResume(): Promise<boolean> {
     const ctx = this.context();
-    if (ctx.state !== 'running') {
-      try {
-        await ctx.resume();
-      } catch {
-        /* 没有手势时浏览器会拒绝，属于预期 */
-      }
+    try {
+      if (ctx.state !== 'running') await ctx.resume();
+    } catch {
+      /* 没有手势时浏览器会拒绝，属于预期 */
     }
-    if (ctx.state === 'running') {
-      // 播一段无声，彻底解锁 iOS/Safari
-      try {
-        const src = ctx.createBufferSource();
-        src.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
-        src.connect(ctx.destination);
-        src.start();
-      } catch {
-        /* 无所谓 */
-      }
-      return true;
+    // WebKit 上 resume() 可能先 resolve、状态稍后才翻成 running，
+    // 立刻去读 state 会误判成失败
+    if (!(await this.settle(ctx, SETTLE_MS))) return false;
+
+    this.ever = true;
+    // 播一段无声，彻底解锁 iOS/Safari
+    try {
+      const src = ctx.createBufferSource();
+      src.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+      src.connect(ctx.destination);
+      src.start();
+    } catch {
+      /* 无所谓 */
     }
-    return false;
+    return true;
+  }
+
+  /** 等状态真的翻成 running，最多等 ms 毫秒。返回最终是否 running。 */
+  private settle(ctx: AudioContext, ms: number) {
+    return new Promise<boolean>((resolve) => {
+      if (ctx.state === 'running') return resolve(true);
+      let timer: ReturnType<typeof setTimeout>;
+      const stop = (ok: boolean) => {
+        clearTimeout(timer);
+        ctx.removeEventListener?.('statechange', onChange);
+        resolve(ok);
+      };
+      const onChange = () => {
+        if (ctx.state === 'running') stop(true);
+      };
+      ctx.addEventListener?.('statechange', onChange);
+      timer = setTimeout(() => stop(ctx.state === 'running'), ms);
+    });
   }
 
   /** @deprecated 用 tryResume()，语义一样但名字不再暗示「必须点按钮」 */

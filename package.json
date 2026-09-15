@@ -10,7 +10,11 @@
     "dev": "NODE_ENV=development node --env-file-if-exists=.env server.js",
     "build": "next build",
     "start": "NODE_ENV=production node --env-file-if-exists=.env server.js",
-    "lint": "next lint"
+    "lint": "next lint",
+    "check:metrics": "node scripts/check-metrics.mjs",
+    "check:audio": "node --import ./scripts/lib/ts-register.mjs scripts/check-audio-unlock.mjs",
+    "check:judge": "node --env-file-if-exists=.env scripts/check-judge.mjs",
+    "check": "npm run check:metrics && npm run check:audio"
   },
   "dependencies": {
     "@msgpack/msgpack": "^3.1.3",

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
-import { AudioEngine } from './audioEngine';
+import { AudioEngine, reportedAudioState } from './audioEngine';
 import { AmbiencePlayer } from './ambience';
 import { getDeviceId, getDeviceName, getHostToken, setDeviceName } from './identity';
 import type {
@@ -150,40 +150,46 @@ export function useRoom(roomId: string) {
   /* ---------------- 声音解锁 ----------------
    * 浏览器要的是「任意用户手势」，不是「点那个特定按钮」。所以这里：
    *   1. 进页面先静默试一次 —— 站点互动度够或本页已交互过的话直接就成了
-   *   2. 否则把首次 pointerdown / keydown / touchstart 当手势，点哪都行
-   *   3. 从后台切回前台时 AudioContext 可能被挂起，自动再恢复一次
-   * 那个横幅只是兜底提示，用户随手点任何东西它就会自己消失。
+   *   2. 否则把 pointerdown / keydown / touchstart 当手势，点哪都行
+   *   3. 跟随 AudioContext 自己的 statechange，被挂起或恢复都立刻反映出来
+   *
+   * 手势监听**全程都挂着**，不在第一次成功后摘掉。手机上 AudioContext 会被反复
+   * 挂起（切后台、锁屏、切 App 都会），摘掉之后就再也没有东西能把它恢复了 ——
+   * 而 visibilitychange 里那次探测没有手势，注定失败，于是设备状态会永远卡在
+   * 「audio blocked」，尽管用户一碰页面声音就又出来了。
+   *
+   * 另外「此刻能不能播」和「要不要提示用户」是两件事：只要解锁过一次，之后的挂起
+   * 用户随手一碰就恢复，不该再弹横幅。所以上报的是 running || everUnlocked，
+   * 而真正决定能不能播的 prepareLocal 用的是实时的 engine.unlocked。
    */
   useEffect(() => {
     const engine = engineRef.current;
     if (!engine) return;
-    let done = false;
+    let armed = false;
 
-    const report = (unlocked: boolean) => {
-      audioStateRef.current = unlocked ? 'ready' : 'blocked';
-      setAudioState(audioStateRef.current);
-      socketRef.current?.emit('device:audio', { unlocked });
+    const sync = () => {
+      const next: AudioState = reportedAudioState(engine);
+      audioStateRef.current = next;
+      setAudioState(next);
+      socketRef.current?.emit('device:audio', { unlocked: next === 'ready' });
     };
 
     const attempt = async (fromGesture: boolean) => {
       const okNow = await engine.tryResume();
-      if (okNow) {
-        report(true);
-        if (fromGesture) void armAmbienceRef.current?.();
-        if (!done) {
-          done = true;
-          detach();
-        }
-      } else if (!fromGesture) {
-        // 探测完了，确实被浏览器拦着 —— 到这一步才该提示用户
-        report(false);
+      if (okNow && fromGesture && !armed) {
+        armed = true;
+        void armAmbienceRef.current?.();
       }
+      // 没解锁成功的 context 在 iOS 上可能已经废了，丢掉，下次手势里重新建
+      if (!okNow && !fromGesture) engine.discardIfLocked();
+      sync();
       return okNow;
     };
 
-    const onGesture = () => void attempt(true);
+    const onGesture = () => {
+      if (!engine.unlocked) void attempt(true);
+    };
     const events: (keyof DocumentEventMap)[] = ['pointerdown', 'keydown', 'touchstart'];
-    const detach = () => events.forEach((e) => document.removeEventListener(e, onGesture, true));
     events.forEach((e) => document.addEventListener(e, onGesture, true));
 
     const onVisible = () => {
@@ -191,11 +197,15 @@ export function useRoom(roomId: string) {
     };
     document.addEventListener('visibilitychange', onVisible);
 
+    // 挂起/恢复不一定由我们触发（来电、系统回收），所以直接听 context 的状态
+    const offState = engine.onStateChange(sync);
+
     void attempt(false);
 
     return () => {
-      detach();
+      events.forEach((e) => document.removeEventListener(e, onGesture, true));
       document.removeEventListener('visibilitychange', onVisible);
+      offState();
     };
   }, []);
 
@@ -275,9 +285,11 @@ export function useRoom(roomId: string) {
     const engine = engineRef.current;
     if (!engine) return;
     const ok = await engine.tryResume();
-    audioStateRef.current = ok ? 'ready' : 'blocked';
-    setAudioState(audioStateRef.current);
-    socketRef.current?.emit('device:audio', { unlocked: ok });
+    void ok;
+    const next: AudioState = reportedAudioState(engine);
+    audioStateRef.current = next;
+    setAudioState(next);
+    socketRef.current?.emit('device:audio', { unlocked: next === 'ready' });
     await armAmbience();
     pushToast(
       ok ? 'success' : 'error',
