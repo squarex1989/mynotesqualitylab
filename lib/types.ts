@@ -261,8 +261,6 @@ export interface RoomSettings {
   ambienceUrl: string | null;
   ambienceVolume: number;
   ambienceDevice: string | null;
-  /** Listens only — plays nothing and is never assigned a speaker */
-  captureDevice: string | null;
   /** Names and product terms, one per line — weighted highest when scoring */
   glossary: string;
   ttsModel: string;

@@ -143,17 +143,12 @@ export function attachRealtime(httpServer) {
       broadcast(roomId);
     });
 
-    // ---------------- 转录对比（收音设备本机 + 房主）----------------
-    const canCompare = () => {
-      if (socket.data.isHost) return true;
-      return getRoom(roomId)?.capture_device === deviceId;
-    };
-
+    // ---------------- 转录对比（写：房主专属；读：谁都能看，走 state 广播）----------------
     const compareOnly = (handler) => async (payload) => {
-      if (!canCompare()) {
+      if (!socket.data.isHost) {
         socket.emit('toast', {
           kind: 'error',
-          message: 'Only the host or the capture device can run comparisons',
+          message: 'Only the host can edit or score comparisons',
         });
         return;
       }

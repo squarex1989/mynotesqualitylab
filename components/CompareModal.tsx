@@ -14,6 +14,8 @@ import type {
 
 interface Props {
   meta: Meta | null;
+  /** 只有 host 能改产品的转录、编 glossary、发起打分；其余人只看结果 */
+  isHost: boolean;
   comparisons: Comparison[];
   referenceLineCount: number;
   glossary: string;
@@ -39,6 +41,19 @@ function okColor(n: number | null | undefined) {
   if (n >= 95) return 'var(--ok)';
   if (n >= 85) return 'var(--accent)';
   return 'var(--err)';
+}
+
+/**
+ * DER（Diarization Error Rate）—— 说话人归属换成「错误率」框架，跟 Plain/Weighted
+ * WER、UER 放在同一张表里时口径一致（都是越低越好）。detailed 的 per-speaker
+ * 映射、merge/split 仍然在下面的 Speakers 块里，这里只是 Ranking 表要的一个数。
+ */
+function derOf(s: SpeakerReport | undefined): { text: string; color: string } {
+  if (!s || s.unavailable) return { text: '—', color: 'var(--muted)' };
+  if (s.unlabeled) return { text: 'n/a', color: 'var(--accent)' };
+  if (typeof s.attributionAccuracy !== 'number') return { text: '—', color: 'var(--muted)' };
+  const der = Math.round((100 - s.attributionAccuracy) * 10) / 10;
+  return { text: pct(der), color: errColor(der) };
 }
 
 function Stat({ value, label, color }: { value: string; label: string; color: string }) {
@@ -335,6 +350,7 @@ function Evidence({ items, label }: { items: Finding[]; label: string }) {
 
 export function CompareModal({
   meta,
+  isHost,
   comparisons,
   referenceLineCount,
   glossary,
@@ -372,16 +388,16 @@ export function CompareModal({
     setDrafts((d) => ({ ...d, [id]: text }));
   };
 
-  /** 按加权错误率排序 —— 这是确定值，不造合成总分 */
+  /**
+   * 已打分的产品，顺序固定为 My Notes / Granola / Otter（跟 meta.compare.products
+   * 一样）——不按分数重排。这是一张并排对比表，不是排行榜，顺序跳来跳去反而
+   * 让人找不到自己关心的那一行。
+   */
   const ranked = useMemo(() => {
-    const rows = products
+    return products
       .map((p) => ({ p, c: byProduct.get(p.id) }))
       .filter((r) => !!r.c?.result && !r.c.result.metrics.wer?.unavailable)
       .map((r) => ({ p: r.p, res: r.c!.result as CompareResult }));
-    rows.sort(
-      (a, b) => (a.res.metrics.weighted?.wer ?? 999) - (b.res.metrics.weighted?.wer ?? 999)
-    );
-    return rows;
   }, [products, byProduct]);
 
   /** 把所有结果拼成 Markdown，方便贴进别处 */
@@ -396,21 +412,17 @@ export function CompareModal({
 
     if (ranked.length > 1) {
       out.push(
-        '## Ranking (by weighted error rate, lower is better)',
+        '## Ranking',
         '',
-        '| # | Product | Weighted | Plain | Deleted | Key wrong | UER | Speakers | Critical |',
-        '|---|---|---|---|---|---|---|---|---|'
+        '| Product | Plain WER | Weighted WER | UER | DER |',
+        '|---|---|---|---|---|'
       );
-      ranked.forEach((r, i) => {
+      ranked.forEach((r) => {
         const m = r.res.metrics;
         out.push(
-          `| ${i + 1} | ${r.p.label} | ${pct(m.weighted?.wer)} | ${pct(m.wer.wer)} | ${pct(
-            m.wer.deletionRate
-          )} | ${pct(m.weighted?.keyErrorRate)} | ${
+          `| ${r.p.label} | ${pct(m.wer.wer)} | ${pct(m.weighted?.wer)} | ${
             r.res.uer?.unavailable ? '—' : pct(r.res.uer?.uer)
-          } | ${m.speakers?.unlabeled ? 'none' : pct(m.speakers?.attributionAccuracy)} | ${
-            r.res.critical ?? 0
-          } |`
+          } | ${derOf(m.speakers).text} |`
         );
       });
       out.push('');
@@ -565,6 +577,13 @@ export function CompareModal({
           whether any meaning was reversed.
         </p>
 
+        {!isHost && (
+          <p className="tiny muted" style={{ margin: '0 0 10px' }}>
+            You can view results here. Only the host can paste transcripts, edit the glossary, or
+            run scoring.
+          </p>
+        )}
+
         {keyProblem && (
           <p className="tiny" style={{ color: 'var(--err)' }}>
             {keyProblem} — everything measured still works, but the two judged questions are skipped
@@ -587,15 +606,18 @@ export function CompareModal({
             <textarea
               rows={3}
               value={terms}
+              readOnly={!isHost}
               placeholder={'Priya Raghavan\nAcme Robotics\nQuicksilver'}
               onFocus={() => {
                 focused.current = true;
               }}
               onBlur={() => {
                 focused.current = false;
-                if (terms !== glossary) onGlossary(terms);
+                if (isHost && terms !== glossary) onGlossary(terms);
               }}
-              onChange={(e) => setTerms(e.target.value)}
+              onChange={(e) => {
+                if (isHost) setTerms(e.target.value);
+              }}
               style={{ fontSize: 12.5 }}
             />
           </label>
@@ -604,6 +626,7 @@ export function CompareModal({
             as. Speaker names from the script and anything containing a digit are included
             automatically. Latin proper nouns are picked up from capitalisation — Chinese and
             Japanese have none, so for those this list is the only way.
+            {!isHost && ' Only the host can edit this list.'}
           </p>
         </div>
 
@@ -611,60 +634,35 @@ export function CompareModal({
           <div className="card" style={{ background: 'var(--panel-2)' }}>
             <h2 style={{ margin: '0 0 4px' }}>Ranking</h2>
             <p className="sub" style={{ marginTop: 0 }}>
-              By weighted error rate, lowest first. No composite score — one number would hide which
-              kind of mistake each product actually makes.
+              Same four metrics side by side. No composite score — one number would hide which kind
+              of mistake each product actually makes. Full detail (proper nouns, per-speaker
+              mapping, evidence) is in each product&apos;s card below.
             </p>
             <table className="scores rank">
               <thead>
                 <tr>
                   <th />
-                  <th>Weighted</th>
-                  <th>Plain</th>
-                  <th>Deleted</th>
-                  <th>Key wrong</th>
+                  <th>Plain WER</th>
+                  <th>Weighted WER</th>
                   <th>UER</th>
-                  <th>Speakers</th>
-                  <th>Critical</th>
+                  <th>DER</th>
                 </tr>
               </thead>
               <tbody>
-                {ranked.map((r, i) => {
+                {ranked.map((r) => {
                   const m = r.res.metrics;
+                  const der = derOf(m.speakers);
                   return (
                     <tr key={r.p.id}>
-                      <td className="dim">
-                        {i + 1}. {r.p.label}
-                      </td>
+                      <td className="dim">{r.p.label}</td>
+                      <td style={{ color: errColor(m.wer.wer) }}>{pct(m.wer.wer)}</td>
                       <td style={{ color: errColor(m.weighted?.wer), fontWeight: 700 }}>
                         {pct(m.weighted?.wer)}
-                      </td>
-                      <td style={{ color: errColor(m.wer.wer) }}>{pct(m.wer.wer)}</td>
-                      <td style={{ color: errColor(m.wer.deletionRate) }}>
-                        {pct(m.wer.deletionRate)}
-                      </td>
-                      <td style={{ color: errColor(m.weighted?.keyErrorRate) }}>
-                        {pct(m.weighted?.keyErrorRate)}
                       </td>
                       <td style={{ color: errColor(r.res.uer?.uer) }}>
                         {r.res.uer?.unavailable ? '—' : pct(r.res.uer?.uer)}
                       </td>
-                      <td
-                        style={{
-                          color: m.speakers?.unlabeled
-                            ? 'var(--accent)'
-                            : okColor(m.speakers?.attributionAccuracy),
-                        }}
-                      >
-                        {m.speakers?.unlabeled ? 'none' : pct(m.speakers?.attributionAccuracy)}
-                      </td>
-                      <td
-                        style={{
-                          color: r.res.critical ? 'var(--err)' : 'var(--ok)',
-                          fontWeight: 600,
-                        }}
-                      >
-                        {r.res.critical ?? 0}
-                      </td>
+                      <td style={{ color: der.color }}>{der.text}</td>
                     </tr>
                   );
                 })}
@@ -681,56 +679,65 @@ export function CompareModal({
             <div key={p.id} className="card" style={{ background: 'var(--panel-2)' }}>
               <div className="spread">
                 <h2 style={{ margin: 0 }}>{p.label}</h2>
-                <div className="row" style={{ gap: 6 }}>
-                  <button className="small ghost" onClick={() => fileRefs.current[p.id]?.click()}>
-                    Choose file
-                  </button>
-                  <input
-                    ref={(el) => {
-                      fileRefs.current[p.id] = el;
-                    }}
-                    type="file"
-                    accept=".txt,.md,.vtt,.srt,.json,text/plain"
-                    style={{ display: 'none' }}
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) void loadFile(p.id, f);
-                      e.target.value = '';
-                    }}
-                  />
-                  {dirty(p.id) && (
+                {isHost && (
+                  <div className="row" style={{ gap: 6 }}>
+                    <button className="small ghost" onClick={() => fileRefs.current[p.id]?.click()}>
+                      Choose file
+                    </button>
+                    <input
+                      ref={(el) => {
+                        fileRefs.current[p.id] = el;
+                      }}
+                      type="file"
+                      accept=".txt,.md,.vtt,.srt,.json,text/plain"
+                      style={{ display: 'none' }}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) void loadFile(p.id, f);
+                        e.target.value = '';
+                      }}
+                    />
+                    {dirty(p.id) && (
+                      <button
+                        className="small primary"
+                        onClick={() => {
+                          onPut(p.id, text);
+                          setDrafts(({ [p.id]: _drop, ...rest }) => rest);
+                        }}
+                      >
+                        Save
+                      </button>
+                    )}
                     <button
                       className="small primary"
-                      onClick={() => {
-                        onPut(p.id, text);
-                        setDrafts(({ [p.id]: _drop, ...rest }) => rest);
-                      }}
+                      disabled={scoring || !text.trim() || dirty(p.id) || referenceLineCount === 0}
+                      onClick={() => onScore(p.id)}
                     >
-                      Save
+                      {scoring ? 'Scoring…' : c?.result ? 'Re-score' : 'Score'}
                     </button>
-                  )}
-                  <button
-                    className="small primary"
-                    disabled={scoring || !text.trim() || dirty(p.id) || referenceLineCount === 0}
-                    onClick={() => onScore(p.id)}
-                  >
-                    {scoring ? 'Scoring…' : c?.result ? 'Re-score' : 'Score'}
-                  </button>
-                </div>
+                  </div>
+                )}
               </div>
 
               <textarea
                 rows={5}
                 value={text}
-                placeholder={`Paste what ${p.label} transcribed…`}
-                onChange={(e) => setDrafts((d) => ({ ...d, [p.id]: e.target.value }))}
-                onDrop={(e) => {
-                  const f = e.dataTransfer.files?.[0];
-                  if (f) {
-                    e.preventDefault();
-                    void loadFile(p.id, f);
-                  }
+                readOnly={!isHost}
+                placeholder={isHost ? `Paste what ${p.label} transcribed…` : 'No transcript pasted yet'}
+                onChange={(e) => {
+                  if (isHost) setDrafts((d) => ({ ...d, [p.id]: e.target.value }));
                 }}
+                onDrop={
+                  isHost
+                    ? (e) => {
+                        const f = e.dataTransfer.files?.[0];
+                        if (f) {
+                          e.preventDefault();
+                          void loadFile(p.id, f);
+                        }
+                      }
+                    : undefined
+                }
                 style={{ marginTop: 10, fontSize: 12.5 }}
               />
               <div className="row tiny muted" style={{ marginTop: 6 }}>

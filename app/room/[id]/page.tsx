@@ -84,7 +84,6 @@ export default function RoomPage() {
   const myLineCount = state
     ? state.speakers.filter((sp) => sp.deviceId === deviceId).reduce((n, sp) => n + sp.lineCount, 0)
     : 0;
-  const isCaptureDevice = state?.settings.captureDevice === deviceId;
   const isAmbienceDevice = state?.settings.ambienceDevice === deviceId;
 
   // 手机上没法看控制台，这一行要能一键复制出来
@@ -148,16 +147,7 @@ export default function RoomPage() {
             <span className={`dot ${connected ? 'ok' : 'err'}`} />
             {connected ? 'connected' : 'connecting…'}
           </span>
-          {state && !isCaptureDevice && (
-            <span className={`pill ${myLineCount > 0 ? 'ok' : ''}`}>
-              {myLineCount > 0
-                ? `this device reads ${myLineCount} line${myLineCount === 1 ? '' : 's'}`
-                : isAmbienceDevice
-                  ? 'ambience only'
-                  : 'no lines on this device'}
-            </span>
-          )}
-          {state && !isCaptureDevice && (
+          {state && (
             <span className={`pill ${myLineCount > 0 ? 'ok' : ''}`}>
               {myLineCount > 0
                 ? `this device reads ${myLineCount} line${myLineCount === 1 ? '' : 's'}`
@@ -168,6 +158,11 @@ export default function RoomPage() {
           )}
           {isHost && <span className="pill on">host</span>}
           {state?.status === 'playing' && <span className="pill on">▶ reading</span>}
+          {state && (
+            <button className="pill" onClick={() => setCompareOpen(true)}>
+              Compare
+            </button>
+          )}
           <Link href="/" className="pill">
             Home
           </Link>
@@ -250,9 +245,6 @@ export default function RoomPage() {
               onAutoAssign={actions.autoAssign}
               onRename={actions.renameDevice}
               onSetAmbienceDevice={(id) => actions.updateSettings({ ambienceDevice: id })}
-              onSetCaptureDevice={(id) => actions.updateSettings({ captureDevice: id })}
-              onOpenCompare={() => setCompareOpen(true)}
-              canCompare={isHost || state.settings.captureDevice === deviceId}
             />
           </div>
           <div>
@@ -288,9 +280,6 @@ export default function RoomPage() {
               onAutoAssign={actions.autoAssign}
               onRename={actions.renameDevice}
               onSetAmbienceDevice={(id) => actions.updateSettings({ ambienceDevice: id })}
-              onSetCaptureDevice={(id) => actions.updateSettings({ captureDevice: id })}
-              onOpenCompare={() => setCompareOpen(true)}
-              canCompare={isHost || state.settings.captureDevice === deviceId}
             />
             <ScriptView
               lines={lines}
@@ -331,6 +320,7 @@ export default function RoomPage() {
       {compareOpen && state && (
         <CompareModal
           meta={meta}
+          isHost={isHost}
           comparisons={state.comparisons}
           referenceLineCount={state.lineCount}
           glossary={state.settings.glossary}

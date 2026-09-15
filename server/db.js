@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS rooms (
   ambience_volume INTEGER NOT NULL DEFAULT 10,
   ambience_device TEXT,
   tts_model     TEXT,                            -- 每个房间可以自己选免费/付费模型
-  capture_device TEXT,                           -- 收音设备：只跑对比、不播声也不承担 speaker
+  capture_device TEXT,                           -- 已废弃：收音设备概念去掉了，列留着不再读写
   glossary      TEXT,                            -- 人名/产品名，每行一个；打分时按关键词加权
   gap_ms        INTEGER NOT NULL DEFAULT 450,
   chaos_period_ms INTEGER NOT NULL DEFAULT 20000,
