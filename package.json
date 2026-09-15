@@ -14,8 +14,9 @@
     "check:metrics": "node scripts/check-metrics.mjs",
     "check:audio": "node --import ./scripts/lib/ts-register.mjs scripts/check-audio-unlock.mjs",
     "check:judge": "node --env-file-if-exists=.env scripts/check-judge.mjs",
-    "check": "npm run check:metrics && npm run check:audio && npm run check:presence",
-    "check:presence": "node scripts/check-presence.mjs"
+    "check": "npm run check:metrics && npm run check:uer && npm run check:audio && npm run check:presence",
+    "check:presence": "node scripts/check-presence.mjs",
+    "check:uer": "node scripts/check-uer.mjs"
   },
   "dependencies": {
     "@msgpack/msgpack": "^3.1.3",

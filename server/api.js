@@ -23,6 +23,7 @@ import {
   JUDGES,
   apiKeyProblem as judgeKeyProblem,
 } from './judge.js';
+import { UER_MODEL } from './uer.js';
 
 const HASH_RE = /^[a-f0-9]{32}$/;
 
@@ -64,6 +65,7 @@ export function createApiRouter({ broadcast }) {
         questions: JUDGE_QUESTIONS.map((q) => ({ key: q.key, label: q.label, ask: q.ask })),
         judges: JUDGES.map((j) => ({ id: j.id, label: j.label, model: j.model })),
         problem: judgeKeyProblem(),
+        uerModel: UER_MODEL(),
       },
     });
   });

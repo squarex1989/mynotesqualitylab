@@ -14,6 +14,7 @@
 // 有没有被弄反。这两件都需要理解语义，code 做不了。
 
 import { alignTexts, werFromAlignment } from './wer.js';
+import { buildUtterances } from './uer.js';
 import {
   FILLER_PHRASES,
   NEGATION_PHRASES,
@@ -612,5 +613,8 @@ export function codeMetrics({ reference, candidate, glossary = '' }) {
     hunks,
     hunksTruncated: truncated,
     totalDiffRuns: totalRuns,
+    // 按真值的行切成 utterance，交给 UER 那一步打分（见 server/uer.js）。
+    // 只是中间产物，不进数据库。
+    utterances: buildUtterances(a),
   };
 }

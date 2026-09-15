@@ -9,6 +9,7 @@ import type {
   Finding,
   SpeakerReport,
   TermReport,
+  UerResult,
 } from '@/lib/types';
 
 interface Props {
@@ -102,6 +103,66 @@ function Measured({ m }: { m: CodeMetrics }) {
         {w.approximate &&
           ' Alignment was approximate — the transcript was too long to align exactly.'}
       </p>
+    </div>
+  );
+}
+
+/**
+ * UER —— 和 μ-bench 同口径的指标，单独一块。
+ *
+ * 刻意不跟「Measured by edit distance」那一块混在一起：那些是算出来的，UER 里
+ * 每个错误的轻重是模型判的，性质不同，不该看起来一样可靠。
+ */
+function Uer({ u }: { u: UerResult | undefined }) {
+  if (!u) return null;
+  if (u.unavailable) {
+    return (
+      <div className="block">
+        <strong className="tiny">Utterance Error Rate</strong>
+        <p className="tiny muted" style={{ margin: '4px 0 0' }}>
+          Not available — {u.reason}
+        </p>
+      </div>
+    );
+  }
+  const c = u.counts ?? { significant: 0, minor: 0, none: 0 };
+  return (
+    <div className="block">
+      <div className="spread">
+        <strong className="tiny">Utterance Error Rate (μ-bench definition)</strong>
+        <span className="tiny muted">{u.model}</span>
+      </div>
+      <div className="metric-row" style={{ marginTop: 8 }}>
+        <Stat value={pct(u.uer)} label="UER" color={errColor(u.uer)} />
+        <Stat
+          value={`${u.significantUtterances}/${u.utterances}`}
+          label="lines with a meaning change"
+          color={u.significantUtterances ? 'var(--err)' : 'var(--ok)'}
+        />
+        <Stat value={String(c.significant)} label="meaning changed" color={errColor(100)} />
+        <Stat value={String(c.minor)} label="differs, same meaning" color="var(--accent)" />
+        <Stat value={String(c.none)} label="surface only" color="var(--ok)" />
+      </div>
+      <p className="tiny muted" style={{ margin: '8px 0 0' }}>
+        Every aligned error is classified as meaning-changed / real-but-harmless /
+        surface-only, then a line counts as wrong if it holds at least one meaning change.
+        A line with one such error scores the same as a line with ten — that is the
+        μ-bench definition, so look at the weighted rate above for how much is wrong.
+        {u.partial && ` Partial: ${u.skipped ?? 0} line(s) were not scored.`}
+      </p>
+      {(u.errors ?? []).length > 0 && (
+        <ul className="terms" style={{ marginTop: 8 }}>
+          {(u.errors ?? []).map((e, n) => (
+            <li key={`${e.line}-${n}`}>
+              <span className="muted">line {e.line}</span>{' '}
+              <code>{e.script || '(nothing)'}</code>
+              {' → '}
+              <code style={{ color: 'var(--err)' }}>{e.transcript || '(nothing)'}</code>
+              {e.reason && <span className="muted"> — {e.reason}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -337,8 +398,8 @@ export function CompareModal({
       out.push(
         '## Ranking (by weighted error rate, lower is better)',
         '',
-        '| # | Product | Weighted | Plain | Deleted | Key wrong | Speakers | Critical |',
-        '|---|---|---|---|---|---|---|---|'
+        '| # | Product | Weighted | Plain | Deleted | Key wrong | UER | Speakers | Critical |',
+        '|---|---|---|---|---|---|---|---|---|'
       );
       ranked.forEach((r, i) => {
         const m = r.res.metrics;
@@ -346,8 +407,10 @@ export function CompareModal({
           `| ${i + 1} | ${r.p.label} | ${pct(m.weighted?.wer)} | ${pct(m.wer.wer)} | ${pct(
             m.wer.deletionRate
           )} | ${pct(m.weighted?.keyErrorRate)} | ${
-            m.speakers?.unlabeled ? 'none' : pct(m.speakers?.attributionAccuracy)
-          } | ${r.res.critical ?? 0} |`
+            r.res.uer?.unavailable ? '—' : pct(r.res.uer?.uer)
+          } | ${m.speakers?.unlabeled ? 'none' : pct(m.speakers?.attributionAccuracy)} | ${
+            r.res.critical ?? 0
+          } |`
         );
       });
       out.push('');
@@ -401,6 +464,25 @@ export function CompareModal({
           out.push(`- "${i.term}" ${bits.join(', ')}`);
         }
         out.push('');
+      }
+
+      const u = c.result.uer;
+      if (u && !u.unavailable) {
+        const cc = u.counts ?? { significant: 0, minor: 0, none: 0 };
+        out.push(
+          `### Utterance Error Rate (μ-bench definition, ${u.model})`,
+          `- UER: ${pct(u.uer)} — ${u.significantUtterances}/${u.utterances} lines hold at least one meaning change`,
+          `- Errors classified: ${cc.significant} meaning-changed, ${cc.minor} real but harmless, ${cc.none} surface-only`,
+          ...(u.partial ? [`- Partial: ${u.skipped ?? 0} line(s) not scored`] : []),
+          ...(u.errors ?? []).map(
+            (e) =>
+              `- line ${e.line}: "${e.script || '(nothing)'}" → "${e.transcript || '(nothing)'}"` +
+              (e.reason ? ` — ${e.reason}` : '')
+          ),
+          ''
+        );
+      } else if (u?.unavailable) {
+        out.push('### Utterance Error Rate', `- not available: ${u.reason}`, '');
       }
 
       const s = m.speakers;
@@ -540,6 +622,7 @@ export function CompareModal({
                   <th>Plain</th>
                   <th>Deleted</th>
                   <th>Key wrong</th>
+                  <th>UER</th>
                   <th>Speakers</th>
                   <th>Critical</th>
                 </tr>
@@ -561,6 +644,9 @@ export function CompareModal({
                       </td>
                       <td style={{ color: errColor(m.weighted?.keyErrorRate) }}>
                         {pct(m.weighted?.keyErrorRate)}
+                      </td>
+                      <td style={{ color: errColor(r.res.uer?.uer) }}>
+                        {r.res.uer?.unavailable ? '—' : pct(r.res.uer?.uer)}
                       </td>
                       <td
                         style={{
@@ -673,6 +759,7 @@ export function CompareModal({
                     empty="Every number came through correctly."
                   />
                   <Speakers s={c.result.metrics.speakers} />
+                  <Uer u={c.result.uer} />
 
                   {questions.map((q) => (
                     <Evidence

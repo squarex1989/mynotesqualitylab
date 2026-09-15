@@ -44,6 +44,8 @@ export interface CompareMeta {
   judges: { id: string; label: string; model: string }[];
   /** Non-null when OPENROUTER_API_KEY is missing or looks wrong */
   problem: string | null;
+  /** 判 UER 三档用的模型 */
+  uerModel?: string;
 }
 
 export interface JudgeResult {
@@ -165,8 +167,39 @@ export interface Finding {
   sources: string[];
 }
 
+/**
+ * UER（Utterance Error Rate）—— 和 μ-bench 同口径。
+ * 逐个错误判三档，再按句二值化：至少一个 significant 就算这句错了。
+ */
+export interface UerResult {
+  metric?: 'UER';
+  model?: string;
+  unavailable?: boolean;
+  reason?: string;
+  /** 分母：参与打分的 utterance 数 */
+  utterances?: number;
+  utterancesWithErrors?: number;
+  significantUtterances?: number;
+  uer?: number | null;
+  counts?: { significant: number; minor: number; none: number };
+  /** 只列意思变了的那些 */
+  errors?: {
+    line: number;
+    speaker: string | null;
+    type: string;
+    script: string;
+    transcript: string;
+    reason: string;
+  }[];
+  tokensUsed?: number;
+  partial?: boolean;
+  skipped?: number;
+  failures?: string[];
+}
+
 export interface CompareResult {
   metrics: CodeMetrics;
+  uer?: UerResult;
   evidence: Record<string, Finding[]>;
   critical?: number;
   judges: JudgeResult[];

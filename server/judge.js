@@ -12,6 +12,7 @@
 // 两个裁判并排跑，证据合并后标注来源：两个都抓到的那条最可信。
 
 import { codeMetrics } from './metrics.js';
+import { computeUer } from './uer.js';
 
 const BASE_URL = () =>
   (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
@@ -363,12 +364,28 @@ function mergeFindings(results) {
 export async function gradeTranscript({ reference, candidate, glossary = '' }) {
   const metrics = codeMetrics({ reference, candidate, glossary });
   if (metrics.unavailable) {
-    return { metrics: strip(metrics), evidence: emptyEvidence(), judges: [], failures: [] };
+    return {
+      metrics: strip(metrics),
+      uer: { unavailable: true, reason: 'Nothing to compare against' },
+      evidence: emptyEvidence(),
+      judges: [],
+      failures: [],
+    };
   }
 
-  const settled = await Promise.allSettled(
-    JUDGES.map((j) => runJudge(j, { reference, metrics }))
-  );
+  // UER 和两个裁判并行跑 —— 它们互不依赖，串起来只是白等
+  const [settled, uerResult] = await Promise.all([
+    Promise.allSettled(JUDGES.map((j) => runJudge(j, { reference, metrics }))),
+    (async () => {
+      const problem = apiKeyProblem();
+      if (problem) return { unavailable: true, reason: problem };
+      try {
+        return await computeUer(metrics.utterances || []);
+      } catch (err) {
+        return { unavailable: true, reason: err?.message || String(err) };
+      }
+    })(),
+  ]);
 
   const judges = [];
   const failures = [];
@@ -390,6 +407,8 @@ export async function gradeTranscript({ reference, candidate, glossary = '' }) {
 
   return {
     metrics: strip(metrics),
+    // 和 μ-bench 同口径：逐个错误判三档，再按句二值化
+    uer: uerResult,
     evidence,
     critical,
     judges: judges.map(({ findings: _f, ...rest }) => rest),
@@ -403,6 +422,6 @@ const emptyEvidence = () => Object.fromEntries(QUESTIONS.map((q) => [q.key, []])
 
 /** diff 片段只是喂给模型的中间产物，没必要存进数据库 */
 function strip(m) {
-  const { hunks: _h, leads, ...rest } = m;
+  const { hunks: _h, utterances: _u, leads, ...rest } = m;
   return { ...rest, leads: (leads || []).slice(0, 40) };
 }
