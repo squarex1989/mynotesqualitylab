@@ -14,6 +14,7 @@ import { ToneSettings } from '@/components/ToneSettings';
 import { ScriptView } from '@/components/ScriptView';
 import { StagePanel } from '@/components/StagePanel';
 import { CompareModal } from '@/components/CompareModal';
+import { isIosLike } from '@/lib/audioEngine';
 
 export default function RoomPage() {
   const params = useParams<{ id: string }>();
@@ -44,6 +45,8 @@ export default function RoomPage() {
     activeIdxs,
     audioState,
     audioDiag,
+    audioReport,
+    playStats,
     unlockAudio,
     ambienceHostRef,
     ambienceStatus,
@@ -70,11 +73,23 @@ export default function RoomPage() {
     audioState === 'blocked' ||
     (state !== null && !connected) ||
     (audioState === 'ready' && (meRow ? !meRow.audioReady : state !== null)) ||
-    myRows > 1;
+    myRows > 1 ||
+    // 开播了却什么都没挂上时间线，或者有解码失败 —— 这正是「状态全绿但不出声」
+    (phase !== 'idle' &&
+      playStats !== null &&
+      (playStats.decodeFails > 0 || (playStats.assigned > 0 && playStats.scheduled === 0)));
+
+  // 这台设备要念几句。台词一句都没分到时它当然不会出声 —— 但以前界面上完全
+  // 看不出来，只能干等。
+  const myLineCount = state
+    ? state.speakers.filter((sp) => sp.deviceId === deviceId).reduce((n, sp) => n + sp.lineCount, 0)
+    : 0;
+  const isCaptureDevice = state?.settings.captureDevice === deviceId;
+  const isAmbienceDevice = state?.settings.ambienceDevice === deviceId;
 
   // 手机上没法看控制台，这一行要能一键复制出来
   const diagLine =
-    `${audioDiag}  local=${audioState}` +
+    `${audioReport()}  local=${audioState}` +
     `  server=${meRow ? (meRow.audioReady ? 'ready' : 'blocked') : 'no-row'}` +
     `  socket=${connected ? 'up' : 'down'}` +
     `  id=${deviceId ? deviceId.slice(0, 6) : '?'}` +
@@ -133,6 +148,24 @@ export default function RoomPage() {
             <span className={`dot ${connected ? 'ok' : 'err'}`} />
             {connected ? 'connected' : 'connecting…'}
           </span>
+          {state && !isCaptureDevice && (
+            <span className={`pill ${myLineCount > 0 ? 'ok' : ''}`}>
+              {myLineCount > 0
+                ? `this device reads ${myLineCount} line${myLineCount === 1 ? '' : 's'}`
+                : isAmbienceDevice
+                  ? 'ambience only'
+                  : 'no lines on this device'}
+            </span>
+          )}
+          {state && !isCaptureDevice && (
+            <span className={`pill ${myLineCount > 0 ? 'ok' : ''}`}>
+              {myLineCount > 0
+                ? `this device reads ${myLineCount} line${myLineCount === 1 ? '' : 's'}`
+                : isAmbienceDevice
+                  ? 'ambience only'
+                  : 'no lines on this device'}
+            </span>
+          )}
           {isHost && <span className="pill on">host</span>}
           {state?.status === 'playing' && <span className="pill on">▶ reading</span>}
           <Link href="/" className="pill">
@@ -153,6 +186,14 @@ export default function RoomPage() {
           </span>
           <button onClick={unlockAudio}>Enable audio</button>
         </div>
+      )}
+
+      {isIosLike() && myLineCount > 0 && (
+        <p className="sub" style={{ margin: '0 0 10px' }}>
+          On iPhone and iPad, flip the ring/silent switch <strong>off</strong>. iOS mutes Web Audio
+          when it is on, while the voice previews above keep working — so this device looks
+          perfectly healthy and still reads every line silently.
+        </p>
       )}
 
       {audioDiag && audioAnomaly && (

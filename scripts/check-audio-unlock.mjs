@@ -77,9 +77,24 @@ Object.defineProperty(globalThis, 'screen', {
   value: { width: 393, height: 852 },
 });
 
-const { AudioEngine, reportedAudioState, audioDiagnostics } = await import(
+const { AudioEngine, reportedAudioState, audioDiagnostics, isIosLike } = await import(
   '../lib/audioEngine.ts'
 );
+
+// primeMediaSession 会 new Audio()；Node 里没有，给个假的记录调用次数
+let audiosPlayed = 0;
+globalThis.Audio = class {
+  constructor() {
+    this.volume = 1;
+  }
+  play() {
+    audiosPlayed++;
+    return Promise.resolve();
+  }
+  pause() {}
+};
+globalThis.URL.createObjectURL = () => 'blob:silent';
+globalThis.Blob = class {};
 
 let pass = 0;
 let fail = 0;
@@ -229,6 +244,45 @@ t('(d) 认出是 iPhone 上的 Chrome', d.includes('ua=iOS/Chrome-iOS/18.5'), d)
 t('(d) 带上触摸点数和屏幕尺寸（UA 能被改写，这两个不能）',
   d.includes('touch5') && d.includes('393x852'), d);
 t('(d) WebKit 没有 userActivation → n/a 本身也是信息', d.includes('active=n/a'), d);
+
+console.log('\n8b) iOS 的静音拨片：解锁时要先放一段无声 <audio> 切换音频会话类别');
+// iOS 上 <audio> 用 playback 类别（无视静音拨片），AudioContext 用 ambient
+//（被拨片掐掉）。所以会出现「试听有声、真念无声」而状态一切正常。
+audiosPlayed = 0;
+gestureAllowed = true;
+e = new AudioEngine();
+await e.tryResume();
+t('★ 解锁时放了一段无声 <audio>', audiosPlayed === 1, `${audiosPlayed}`);
+await e.tryResume();
+await e.tryResume();
+t('只放一次，不是每次 tryResume 都放', audiosPlayed === 1, `${audiosPlayed}`);
+
+console.log('\n8c) 认出 iOS —— 包括开了「请求桌面版网站」的情况');
+t('iPhone 的 UA', isIosLike() === true);
+Object.defineProperty(globalThis, 'navigator', {
+  configurable: true,
+  value: {
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 CriOS/140',
+    maxTouchPoints: 5,
+  },
+});
+t('桌面版模式下仍认出是 iOS', isIosLike() === true);
+Object.defineProperty(globalThis, 'navigator', {
+  configurable: true,
+  value: {
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/140 Safari/537.36',
+    maxTouchPoints: 0,
+  },
+});
+t('真的 Mac 不会被误认', isIosLike() === false);
+Object.defineProperty(globalThis, 'navigator', {
+  configurable: true,
+  value: {
+    userAgent:
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/140.0.7339.98 Mobile/15E148 Safari/604.1',
+    maxTouchPoints: 5,
+  },
+});
 
 console.log('\n9a) 解锁成功后要清掉上次的错误');
 gestureAllowed = false;

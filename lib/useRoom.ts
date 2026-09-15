@@ -2,7 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
-import { AudioEngine, reportedAudioState, audioDiagnostics } from './audioEngine';
+import {
+  AudioEngine,
+  reportedAudioState,
+  audioDiagnostics,
+  playbackDiagnostics,
+} from './audioEngine';
 import { AmbiencePlayer } from './ambience';
 import { getDeviceId, getDeviceName, getHostToken, setDeviceName } from './identity';
 import type {
@@ -80,6 +85,28 @@ export function useRoom(roomId: string) {
     setToasts((prev) => [...prev.slice(-4), { id, kind, message }]);
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 5200);
   }, []);
+
+  // 取音频失败、解码失败以前都是 catch 里一个裸 return —— 没声音又没解释，
+  // 是最糟的结果，也是这次查了好几轮的直接原因。现在让它说话。
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    engine.onTrouble = (message) => pushToast('error', message);
+    return () => {
+      engine.onTrouble = null;
+    };
+  }, [pushToast]);
+
+  // 解码失败、音频取不下来这些以前是 catch 里一个裸 return —— 没声音又没解释，
+  // 是最糟的结果。现在让它说话。
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    engine.onTrouble = (message) => pushToast('error', message);
+    return () => {
+      engine.onTrouble = null;
+    };
+  }, [pushToast]);
 
   /* ---------------- socket ---------------- */
   useEffect(() => {
@@ -390,6 +417,13 @@ export function useRoom(roomId: string) {
     activeIdxs,
     audioState,
     audioDiag,
+    /** 播放链路实况。渲染时读，播放中页面本来就在持续重渲染。 */
+    playStats: engineRef.current?.play ?? null,
+    audioReport: () => {
+      const engine = engineRef.current;
+      if (!engine) return '';
+      return `${audioDiagnostics(engine, gestureCountRef.current)}  ${playbackDiagnostics(engine)}`;
+    },
     audioUnlocked: audioState === 'ready',
     unlockAudio,
     ambienceHostRef,

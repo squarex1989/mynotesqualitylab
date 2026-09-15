@@ -56,6 +56,62 @@ export function audioDiagnostics(engine: AudioEngine, gestures: number) {
   return bits.join('  ');
 }
 
+/** 播放链路的实况。只在真的开播过之后才有意义。 */
+export function playbackDiagnostics(engine: AudioEngine) {
+  const p = engine.play;
+  const bits = [`assigned=${p.assigned}`, `decoded=${p.decoded}`, `scheduled=${p.scheduled}`];
+  if (p.decodeFails) bits.push(`decodeFails=${p.decodeFails}`);
+  if (p.skippedMuted) bits.push(`muted=${p.skippedMuted}`);
+  if (p.skippedLate) bits.push(`late=${p.skippedLate}`);
+  if (p.lastError) bits.push(`playErr=${p.lastError}`);
+  if (engine.diag.mediaPrimeError) bits.push(`mediaPrime=${engine.diag.mediaPrimeError}`);
+  return bits.join('  ');
+}
+
+/**
+ * 一小段全是 0 的 WAV。用来把 iOS 的音频会话类别切成 playback ——
+ * 生成字节而不是写死 data URI，是因为 0 长度的 WAV 有些实现会直接拒收。
+ */
+let silentUrl = '';
+function silentWavUrl() {
+  if (silentUrl) return silentUrl;
+  const rate = 8000;
+  const samples = rate / 10; // 0.1 秒
+  const buf = new ArrayBuffer(44 + samples * 2);
+  const v = new DataView(buf);
+  const tag = (off: number, s: string) => {
+    for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i));
+  };
+  tag(0, 'RIFF');
+  v.setUint32(4, 36 + samples * 2, true);
+  tag(8, 'WAVE');
+  tag(12, 'fmt ');
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true); // PCM
+  v.setUint16(22, 1, true); // 单声道
+  v.setUint32(24, rate, true);
+  v.setUint32(28, rate * 2, true);
+  v.setUint16(32, 2, true);
+  v.setUint16(34, 16, true);
+  tag(36, 'data');
+  v.setUint32(40, samples * 2, true);
+  silentUrl = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+  return silentUrl;
+}
+
+/**
+ * 是不是 iOS 设备。
+ *
+ * 光看 iPhone/iPad 不够：开了「请求桌面版网站」之后 UA 会变成 Macintosh，
+ * 所以补一条 —— 说自己是 Mac 但有多个触摸点的，那是 iPad/iPhone。
+ */
+export function isIosLike() {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent;
+  if (/CriOS|FxiOS|EdgiOS|iPhone|iPad|iPod/.test(ua)) return true;
+  return /Macintosh/.test(ua) && (navigator.maxTouchPoints ?? 0) > 1;
+}
+
 function activation() {
   const ua = (navigator as any).userActivation;
   if (!ua) return 'n/a';
@@ -121,12 +177,35 @@ export class AudioEngine {
 
   private ever = false;
   private stateWatchers = new Set<() => void>();
+  private mediaPrimed = false;
+  private troubleSeen = new Set<string>();
+
+  /** 播放链路出问题时喊一声。静默失败是最糟的结果 —— 没声音又没解释。 */
+  onTrouble: ((message: string) => void) | null = null;
+
+  /**
+   * 播放链路的实况计数。
+   *
+   * 「状态一切正常但就是不出声」有好几种原因，从外面一个都看不出来：这台设备
+   * 根本没分到台词？音频取不下来？iOS 的 decodeAudioData 拒了？还是排期算晚了
+   * 全被跳过？所以每一步都记下来。
+   */
+  readonly play = {
+    assigned: 0, // 这台设备分到几条
+    decoded: 0,
+    decodeFails: 0,
+    scheduled: 0, // 真的挂到时间线上了
+    skippedMuted: 0, // 角色音量为 0
+    skippedLate: 0, // 排期已经过去了，整条来不及了
+    lastError: '',
+  };
 
   /**
    * 诊断计数。iOS 上解锁失败的原因很难从外部看出来（是手势没收到？resume 被拒？
    * 还是状态翻得太慢被我们等超时了？），所以把这些都记下来显示到界面上。
    */
   readonly diag = {
+    mediaPrimeError: '', // 静音 <audio> 没能起播时的原因
     contexts: 0, // 创建过几个 AudioContext（iOS 每页上限 4 个）
     attempts: 0, // tryResume 被调用了几次
     resumeRejects: 0, // resume() 抛错几次（没有手势时的正常表现）
@@ -161,6 +240,43 @@ export class AudioEngine {
   onStateChange(fn: () => void) {
     this.stateWatchers.add(fn);
     return () => this.stateWatchers.delete(fn);
+  }
+
+  /** 同一个原因只喊一次 —— 一条脚本几百句，不能刷几百个提示 */
+  private trouble(msg: string) {
+    if (this.troubleSeen.has(msg)) return;
+    this.troubleSeen.add(msg);
+    this.onTrouble?.(msg);
+  }
+
+  /**
+   * 先放一段无声的 <audio>，把 iOS 的音频会话类别切成 playback。
+   *
+   * iOS 上这两条路走的是不同的会话类别：<audio> 用 playback，无视侧面的静音
+   * 拨片；AudioContext 用 ambient，会被静音拨片直接掐掉。于是会出现「角色试听
+   * 有声（那是 <audio>）、真念无声（那是 Web Audio）」，而 context 状态一切正常。
+   * 先播一次 <audio> 能把类别切过去，让 Web Audio 也能出声。
+   *
+   * 必须在用户手势的同一个同步周期里调用，所以这里不 await。
+   */
+  private primeMediaSession() {
+    if (this.mediaPrimed || typeof Audio === 'undefined') return;
+    try {
+      const el = new Audio(silentWavUrl());
+      el.volume = 1; // 样本全是 0，本来就没声音
+      const p = el.play();
+      this.mediaPrimed = true;
+      void p
+        ?.then(() => {
+          el.pause();
+        })
+        .catch((err) => {
+          this.mediaPrimed = false;
+          this.diag.mediaPrimeError = errText(err);
+        });
+    } catch (err) {
+      this.diag.mediaPrimeError = errText(err);
+    }
   }
 
   /** 可能返回 null —— iOS 每页最多 4 个 AudioContext，超了构造函数会抛 */
@@ -214,6 +330,8 @@ export class AudioEngine {
    */
   async tryResume(): Promise<boolean> {
     this.diag.attempts++;
+    // 同步发起，不 await —— iOS 只认用户手势那一个同步周期
+    this.primeMediaSession();
     const ctx = this.context();
     if (!ctx) return false;
 
@@ -278,12 +396,26 @@ export class AudioEngine {
 
     const task = (async () => {
       const res = await fetch(audioUrl(hash));
-      if (!res.ok) throw new Error(`Could not fetch audio ${hash}`);
+      if (!res.ok) throw new Error(`could not fetch audio (HTTP ${res.status})`);
       const arr = await res.arrayBuffer();
-      const buf = await this.ctx!.decodeAudioData(arr);
+      let buf: AudioBuffer;
+      try {
+        buf = await this.ctx!.decodeAudioData(arr);
+      } catch (err) {
+        // iOS 的 decodeAudioData 比别家挑，而且拒绝时给的理由常常是空的
+        throw new Error(`this browser could not decode the audio (${errText(err) || 'no reason given'})`);
+      }
       this.buffers.set(hash, buf);
+      this.play.decoded++;
       return buf;
-    })().finally(() => this.inflight.delete(hash));
+    })()
+      .catch((err) => {
+        this.play.decodeFails++;
+        this.play.lastError = errText(err);
+        this.trouble(`Audio problem on this device — ${errText(err)}`);
+        throw err;
+      })
+      .finally(() => this.inflight.delete(hash));
 
     this.inflight.set(hash, task);
     return task;
@@ -295,6 +427,16 @@ export class AudioEngine {
    */
   async prepare(token: string, myItems: ScheduleItem[], count = 4) {
     this.token = token;
+    this.troubleSeen.clear();
+    Object.assign(this.play, {
+      assigned: myItems.length,
+      decoded: 0,
+      decodeFails: 0,
+      scheduled: 0,
+      skippedMuted: 0,
+      skippedLate: 0,
+      lastError: '',
+    });
     this.items = myItems
       .slice()
       .sort((a, b) => a.startMs - b.startMs)
@@ -346,6 +488,7 @@ export class AudioEngine {
         item._scheduled = true;
         // 静音的角色连解码都省了，只是安静地占着这段时间
         if ((item.volume ?? 1) > 0) void this.scheduleItem(item, startCtx);
+        else this.play.skippedMuted++;
       }
     }
 
@@ -374,7 +517,10 @@ export class AudioEngine {
     if (startCtx < now) {
       // 迟到了（页面卡了一下 / 网络慢），从音频中间切进去，别整体后移
       offset = now - startCtx;
-      if (offset >= buf.duration - 0.05) return;
+      if (offset >= buf.duration - 0.05) {
+        this.play.skippedLate++;
+        return;
+      }
       when = now + 0.02;
     }
 
@@ -402,6 +548,7 @@ export class AudioEngine {
     src.connect(gain);
     gain.connect(this.ctx.destination);
     src.start(when, offset);
+    this.play.scheduled++;
 
     this.active.add(src);
     src.onended = () => this.active.delete(src);
