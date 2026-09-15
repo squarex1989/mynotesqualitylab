@@ -30,6 +30,17 @@ export function titleWeight(s) {
 }
 
 /** 规整房间名：去首尾空白、压缩空格、按权重截断。空名返回 null。 */
+/**
+ * 角色音量：0 表示静音，其余取 20–100。
+ * 刻意不进音频哈希 —— 它是播放时的增益，不是合成参数，调整应该即时且免费。
+ */
+export function normalizeVolume(v) {
+  const n = Math.round(Number(v));
+  if (!Number.isFinite(n) || n >= 100) return 100;
+  if (n <= 0) return 0;
+  return Math.max(20, Math.min(100, n));
+}
+
 export function normalizeTitle(raw) {
   const t = String(raw ?? '').replace(/\s+/g, ' ').trim();
   if (!t) return null;
@@ -169,10 +180,15 @@ export function updateSpeaker(roomId, name, patch) {
     instructions = buildInstructions(config);
   }
 
-  db.prepare(
-    'UPDATE speakers SET voice = ?, config = ?, instructions = ?, custom = ? WHERE room_id = ? AND name = ?'
-  ).run(voice, JSON.stringify(config), instructions, custom, roomId, name);
+  const volume =
+    patch.volume !== undefined ? normalizeVolume(patch.volume) : normalizeVolume(row.volume);
 
+  db.prepare(
+    `UPDATE speakers SET voice = ?, config = ?, instructions = ?, custom = ?, volume = ?
+     WHERE room_id = ? AND name = ?`
+  ).run(voice, JSON.stringify(config), instructions, custom, volume, roomId, name);
+
+  // 音量变了不算 changed —— 它不进音频哈希，不需要重新合成
   const changed = before.voice !== voice || before.instructions !== instructions;
   return { changed };
 }
@@ -438,6 +454,7 @@ export function roomState(roomId) {
       ),
       instructions: s.instructions,
       custom: Boolean(s.custom),
+      volume: normalizeVolume(s.volume),
       deviceId: s.device_id,
       lineCount: db
         .prepare('SELECT COUNT(*) AS n FROM lines WHERE room_id = ? AND speaker = ?')

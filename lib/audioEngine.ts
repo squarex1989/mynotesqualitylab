@@ -143,7 +143,8 @@ export class AudioEngine {
       }
       if (!item._scheduled) {
         item._scheduled = true;
-        void this.scheduleItem(item, startCtx);
+        // 静音的角色连解码都省了，只是安静地占着这段时间
+        if ((item.volume ?? 1) > 0) void this.scheduleItem(item, startCtx);
       }
     }
 
@@ -179,17 +180,21 @@ export class AudioEngine {
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
 
+    // 角色音量是播放时的增益（模拟离收音设备的远近），和抢话时的压音量相乘。
+    // 它不进音频哈希 —— 调音量是即时的，不需要重新合成。
+    const volume = item.volume ?? 1;
     const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(1, Math.max(when, now));
+    gain.gain.setValueAtTime(volume, Math.max(when, now));
 
     if (item.duckFromMs != null) {
-      // 这一句被下一句抢了：从重叠开始处淡到 duckGain
+      // 这一句被下一句抢了：从重叠开始处淡到 volume × duckGain
       const duckAt = startCtx + item.duckFromMs / 1000;
+      const ducked = volume * item.duckGain;
       if (duckAt > now + 0.02) {
-        gain.gain.setValueAtTime(1, duckAt);
-        gain.gain.linearRampToValueAtTime(item.duckGain, duckAt + 0.25);
+        gain.gain.setValueAtTime(volume, duckAt);
+        gain.gain.linearRampToValueAtTime(ducked, duckAt + 0.25);
       } else {
-        gain.gain.setValueAtTime(item.duckGain, Math.max(when, now));
+        gain.gain.setValueAtTime(ducked, Math.max(when, now));
       }
     }
 

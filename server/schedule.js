@@ -6,7 +6,7 @@ const MIN_OVERLAP_MS = 400;
 /**
  * @param {object} room      rooms 表的一行
  * @param {Array}  lines     [{idx, speaker, content}]
- * @param {Map}    speakerMap speaker -> {voice, instructions, device_id}
+ * @param {Map}    speakerMap speaker -> {voice, instructions, device_id, volume}
  * @param {Map}    audioMap  idx -> {hash, durationMs}
  * @param {string} fallbackDevice 没分配设备的角色兜底到谁（host）
  */
@@ -26,6 +26,8 @@ export function buildSchedule(room, lines, speakerMap, audioMap, fallbackDevice)
     const sp = speakerMap.get(line.speaker);
     const deviceId = sp?.device_id || fallbackDevice || null;
     const duration = audio.durationMs;
+    // 角色音量：播放时的增益倍数，用来模拟离收音设备的远近
+    const volume = Math.max(0, Math.min(1, (sp?.volume ?? 100) / 100));
 
     if (items.length === 0) {
       items.push({
@@ -38,6 +40,7 @@ export function buildSchedule(room, lines, speakerMap, audioMap, fallbackDevice)
         overlapMs: 0,
         duckFromMs: null,
         duckGain,
+        volume,
       });
       continue;
     }
@@ -85,6 +88,7 @@ export function buildSchedule(room, lines, speakerMap, audioMap, fallbackDevice)
       overlapMs: overlap,
       duckFromMs: null,
       duckGain,
+      volume,
     });
   }
 

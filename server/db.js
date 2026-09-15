@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS speakers (
   config       TEXT NOT NULL,      -- JSON: {gender, age, tone, accent, pace, emotion, quirk}
   instructions TEXT NOT NULL,
   custom       INTEGER NOT NULL DEFAULT 0,  -- 1 = instructions 被手工改过，不再随下拉自动重写
+  volume       INTEGER NOT NULL DEFAULT 100, -- 播放增益百分比，模拟离麦克风远近；不进音频哈希
   device_id    TEXT,               -- 分配到的设备
   PRIMARY KEY (room_id, name)
 );
@@ -119,6 +120,7 @@ function addColumnIfMissing(table, column, definition) {
 addColumnIfMissing('rooms', 'tts_model', 'TEXT');
 addColumnIfMissing('rooms', 'ambience_url_cafe', 'TEXT');
 addColumnIfMissing('rooms', 'ambience_url_airport', 'TEXT');
+addColumnIfMissing('speakers', 'volume', 'INTEGER NOT NULL DEFAULT 100');
 
 // 场景默认音源。放在这一层是为了让下面的回填和 createRoom 用同一份值。
 export const AMBIENCE_DEFAULTS = {

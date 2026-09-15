@@ -56,6 +56,8 @@ export interface Speaker {
   configLabels: Record<DimensionKey, string>;
   instructions: string;
   custom: boolean;
+  /** Playback gain in percent (0 = muted, else 20–100). Not part of the audio cache key. */
+  volume: number;
   deviceId: string | null;
   lineCount: number;
   sampleHash: string | null;
@@ -121,6 +123,8 @@ export interface ScheduleItem {
   overlapMs: number;
   duckFromMs: number | null;
   duckGain: number;
+  /** 0–1 playback gain for this speaker */
+  volume: number;
 }
 
 export interface AmbienceConfig {

@@ -12,12 +12,23 @@ interface Props {
   speaking: Set<string>;
   onUpdate: (
     name: string,
-    patch: { voice?: string; config?: Record<string, string>; instructions?: string | null; resetInstructions?: boolean }
+    patch: {
+      voice?: string;
+      config?: Record<string, string>;
+      volume?: number;
+      instructions?: string | null;
+      resetInstructions?: boolean;
+    }
   ) => void;
   onRandomize: (name: string) => void;
   onRandomizeAll: () => void;
   onAssign: (name: string, deviceId: string | null) => void;
 }
+
+// 0 表示静音，其余 20–100。用离散选项而不是滑块 —— 1–19 是无效区间，
+// 滑块会让人以为能拖到那里去。
+const VOLUME_OPTIONS = [100, 90, 80, 70, 60, 50, 40, 30, 20, 0];
+const volumeLabel = (v: number) => (v === 0 ? 'Muted' : `${v}%`);
 
 export function SpeakerList({
   speakers,
@@ -51,7 +62,8 @@ export function SpeakerList({
       </div>
       <p className="sub">
         {meta && <>{meta.voices.length} voices available. </>}Character comes from the voice itself
-        — pick one per speaker and adjust the pace if needed. Then hit{' '}
+        — pick one per speaker, adjust the pace, and use volume to fake how far each person sits
+        from the mic. Then hit{' '}
         <strong>Synthesize audio</strong> on the right; edits never trigger TTS on their own, and
         only speakers that actually changed get re-synthesized.
         {meta?.fallbackVoices && (
@@ -137,6 +149,11 @@ function SpeakerCard({
           <span className="pill">{voiceInfo.languages.join('/')}</span>
         ) : null}
         <span className="pill">{speaker.configLabels.pace}</span>
+        {speaker.volume !== 100 && (
+          <span className={`pill${speaker.volume === 0 ? ' err' : ' on'}`}>
+            {volumeLabel(speaker.volume)}
+          </span>
+        )}
         {voiceInfo?.note ? <span className="pill">{voiceInfo.note}</span> : null}
       </div>
 
@@ -176,6 +193,22 @@ function SpeakerCard({
             ))}
 
             <label className="field">
+              Volume
+              <select
+                value={speaker.volume}
+                onChange={(e) =>
+                  onUpdate(speaker.name, { volume: Number(e.target.value) })
+                }
+              >
+                {VOLUME_OPTIONS.map((v) => (
+                  <option key={v} value={v}>
+                    {volumeLabel(v)}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="field">
               Read by
               <select
                 value={speaker.deviceId ?? ''}
@@ -197,6 +230,7 @@ function SpeakerCard({
         <p className="tiny muted" style={{ margin: '8px 0 0' }}>
           {voiceInfo?.label ?? speaker.voice} ·{' '}
           {assigned ? `read by ${assigned.name}` : 'no device assigned'}
+          {speaker.volume !== 100 ? ` · ${volumeLabel(speaker.volume)}` : ''}
         </p>
       )}
     </div>

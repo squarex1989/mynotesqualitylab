@@ -293,7 +293,13 @@ export function useRoom(roomId: string) {
       },
       updateSpeaker: (
         name: string,
-        patch: { voice?: string; config?: Record<string, string>; instructions?: string | null; resetInstructions?: boolean }
+        patch: {
+          voice?: string;
+          config?: Record<string, string>;
+          volume?: number;
+          instructions?: string | null;
+          resetInstructions?: boolean;
+        }
       ) => emit('speaker:update', { name, ...patch }),
       randomizeSpeaker: (name: string) => emit('speaker:randomize', { name }),
       randomizeAll: () => emit('speakers:randomizeAll'),
