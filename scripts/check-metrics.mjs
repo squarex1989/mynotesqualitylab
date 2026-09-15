@@ -184,6 +184,98 @@ t('--> 不会剩下一个 -- token',
   !tk('A: we shipped --> done').some((x) => /^-+$/.test(x)),
   JSON.stringify(tk('A: we shipped --> done')));
 
+// ---------------------------------------------------------------- 4d
+group('4d) My Notes 的导出格式：说话人抬头单独一行，而且没有冒号');
+// 真实样本的形态。抬头行「Speaker 1 18:34:51」不认的话会出三个问题：
+// 剥掉时间码后剩「Speaker 1」被当成正文（每轮多 2 个 token，数字那个还按关键词
+// ×3 算）、一个说话人标签都识别不出（归属会报「产品没做分离」）、一轮跨多行的
+// 台词认不出说话人。
+const MY_NOTES_REF = [
+  "Priya: Let's use the hour on NovaLedger. I want a decision. Not another list of diligence questions.",
+  'Daniel: My recommendation is to invest, but only if the valuation comes down, and the banking partner is locked in.',
+  'Priya: You sound more convinced than you did on Monday.',
+  'Daniel: I spoke with four customers. Three said the product replaced manual treasury work. One said it was mostly a nicer dashboard.',
+  'Priya: So the agent story is still early.',
+  'Daniel: ARR is 18 million. Gross retention is 94% and NRR is 118.',
+].join('\n');
+const MY_NOTES_CAND = [
+  'Speaker 1 18:34:51',
+  "Let's use the hour on nova.",
+  'I want a decision.',
+  'Not another list of diligence questions.',
+  'Speaker 2 18:34:57',
+  'My recommendation is to invest, but only if the valuation comes down, and the banking partner is locked in.',
+  'Speaker 1 18:35:05',
+  'You sound more convinced than you did on monday.',
+  'Speaker 2 18:35:08',
+  'I spoke with four customers free, said the product replaced manual treasury work.',
+  'One said it was mostly a nicer dashboard.',
+  'Speaker 1 18:36:32',
+  'So the Asian story is still early.',
+  'Speaker 2 18:36:43',
+  'ARR is 18 million.',
+  'Gross retention is 94% and NRR is 118.',
+].join('\n');
+const mn = codeMetrics({
+  reference: MY_NOTES_REF,
+  candidate: MY_NOTES_CAND,
+  glossary: 'NovaLedger',
+});
+
+t('★ 认出两个说话人（抬头行没有冒号）',
+  analyze(MY_NOTES_CAND).labels.join(',') === 'Speaker 1,Speaker 2',
+  JSON.stringify(analyze(MY_NOTES_CAND).labels));
+t('★ 抬头行不贡献 token（两边都是 84 词）',
+  mn.wer.refTokens === 84 && mn.wer.hypTokens === 84,
+  `${mn.wer.refTokens}/${mn.wer.hypTokens}`);
+t('★ 抬头里的数字没被当成数字', mn.numbers.checked === 3, `${mn.numbers.checked}`);
+t('speaker / 1 这些词没进正文',
+  !analyze(MY_NOTES_CAND).tokens.includes('speaker'),
+  JSON.stringify(analyze(MY_NOTES_CAND).tokens.slice(0, 6)));
+
+// 埋的三处真实 ASR 错误：NovaLedger→nova、Three→free、agent→Asian
+t('S3 D0 I0（正好三处替换）',
+  mn.wer.substitutions === 3 && mn.wer.deletions === 0 && mn.wer.insertions === 0,
+  `S${mn.wer.substitutions} D${mn.wer.deletions} I${mn.wer.insertions}`);
+t('WER 3.6%（3/84）', mn.wer.wer === 3.6, `${mn.wer.wer}`);
+t('Monday → monday 只是大小写，不算错',
+  !mn.properNouns.issues.some((i) => i.term === 'Monday'),
+  JSON.stringify(mn.properNouns.issues.map((i) => i.term)));
+t('专有名词 3/4：NovaLedger / Monday / ARR / NRR，只有第一个错',
+  mn.properNouns.checked === 4 &&
+    mn.properNouns.clean === 3 &&
+    mn.properNouns.issues[0].wrong.some((w) => w.got === 'nova'),
+  `${mn.properNouns.clean}/${mn.properNouns.checked} ` +
+    JSON.stringify(mn.properNouns.issues.map((i) => i.term)));
+t('数字全对（18 / 94 / 118）', mn.numbers.issues.length === 0, JSON.stringify(mn.numbers.issues));
+// 关键词 8 个：NovaLedger、Monday、ARR、NRR、18、94、118，加否定词 Not
+t('关键词 8 个，错 1 个 = 12.5%',
+  mn.weighted.keyTokens === 8 && mn.weighted.keyErrorRate === 12.5,
+  `${mn.weighted.keyTokens} / ${mn.weighted.keyErrorRate}`);
+// 5 / 100：错的是 key(3) + normal(1) + normal(1)；分母 8×3 + 76×1
+t('加权 5%', mn.weighted.wer === 5, `${mn.weighted.wer}`);
+t('★ 跨多行的台词正确归属，100%',
+  mn.speakers.attributionAccuracy === 100, `${mn.speakers.attributionAccuracy}`);
+t('Priya→Speaker 1、Daniel→Speaker 2',
+  mn.speakers.refSpeakers[0].mappedTo === 'Speaker 1' &&
+    mn.speakers.refSpeakers[1].mappedTo === 'Speaker 2',
+  JSON.stringify(mn.speakers.refSpeakers.map((r) => r.mappedTo)));
+t('三处差异各自成一段 diff', mn.hunks.length === 3, `${mn.hunks.length}`);
+
+group('4e) 抬头行的各种排版，以及不能误吞台词');
+const lab = (x) => analyze(x).labels;
+t('名字 + 三段时间码', lab('Speaker 1 18:34:51\nhello').join() === 'Speaker 1');
+t('名字 + 两段时间码（名字是 Speaker N 才认）',
+  lab('Speaker 2 34:51\nhello').join() === 'Speaker 2');
+t('时间码在前', lab('[00:12:30] Priya\nhello').join() === 'Priya');
+t('括号包住的时间码', lab('Daniel (00:12:30)\nhello').join() === 'Daniel');
+t('★ 不能把「We ship at 10:30」当成抬头', lab('A: We ship at 10:30').join() === 'A',
+  JSON.stringify(lab('A: We ship at 10:30')));
+t('★ 那句台词也没被整行吞掉',
+  analyze('A: We ship at 10:30').tokens.join(' ') === 'we ship at 10 30',
+  JSON.stringify(analyze('A: We ship at 10:30').tokens));
+t('冒号格式照旧', lab('Alice: hi\nBob: yo').join() === 'Alice,Bob');
+
 // ---------------------------------------------------------------- 5
 group('5) 数字');
 const num = codeMetrics({

@@ -57,6 +57,48 @@ function scrub(line) {
  */
 const TS_LEAD = new RegExp(String.raw`^\s*${TS}\s*[-–—]?\s*`);
 
+/*
+ * 说话人抬头行：名字和时间码单独占一行，接下来几行都是这个人说的。
+ * My Notes 导出的就是这个格式，而且**没有冒号**：
+ *
+ *   Speaker 1 18:34:51
+ *   Let's use the hour on nova.
+ *   I want a decision.
+ *   Speaker 2 18:34:57
+ *   My recommendation is to invest...
+ *
+ * 不认这个格式的话，剥掉时间码之后剩下的「Speaker 1」会被当成正文 —— 每一轮
+ * 凭空多出两个 token，其中那个数字还会被当成关键词按 3 倍权重算；更糟的是
+ * 一个说话人标签都识别不出来，于是说话人归属会报「产品没做分离」，而它明明分了。
+ */
+const HEADER_NAME_FIRST =
+  /^\s*(?:\[|\()?\s*([^\d:：][^:：]{0,39}?)\s*(?:\]|\))?[\s,，]+(?:\[|\()?(\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?)(?:\]|\))?\s*$/;
+const HEADER_TS_FIRST =
+  /^\s*(?:\[|\()?(\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?)(?:\]|\))?\s*[-–—]?\s*([^\d:：][^:：]{0,39}?)\s*$/;
+
+/**
+ * 认出抬头行，返回说话人名字；不是抬头就返回 null。
+ *
+ * 会误判的是「We ship at 10:30」这种整行看着也像抬头的台词，所以只在两种情况下
+ * 认：时间码是三段式（台词里说出 18:34:51 的概率极低），或者名字明确是
+ * Speaker N。宁可漏认一种排版，也不要把一句台词整行吞掉。
+ */
+function headerOf(line) {
+  for (const [re, nameAt, tsAt] of [
+    [HEADER_NAME_FIRST, 1, 2],
+    [HEADER_TS_FIRST, 2, 1],
+  ]) {
+    const m = line.match(re);
+    if (!m) continue;
+    const name = (m[nameAt] || '').trim();
+    if (!name) continue;
+    const threePart = /\d{1,2}:\d{2}:\d{2}/.test(m[tsAt]);
+    if (!threePart && !/^speaker\s*\d+$/i.test(name)) continue;
+    return name;
+  }
+  return null;
+}
+
 /** 拆出「说话人标签」和正文。非语音内容（方括号标注、时间码）一并剥掉。 */
 export function splitLine(line) {
   const s = scrub(line).replace(TS_LEAD, '');
@@ -98,8 +140,23 @@ export function analyze(text) {
     .replace(/\r\n?/g, '\n')
     .split('\n');
 
-  // 先过一遍决定按词还是按字：CJK 字符占一半以上就按字
-  const bodies = rawLines.map((l) => splitLine(l));
+  // 先过一遍决定按词还是按字：CJK 字符占一半以上就按字。
+  // 说话人是有状态的：抬头行之后的每一行都归那个人，直到下一个抬头。
+  let current = null;
+  const bodies = rawLines.map((raw) => {
+    const head = headerOf(raw);
+    if (head) {
+      current = head;
+      return { label: head, body: '' };
+    }
+    const { label, body } = splitLine(raw);
+    if (label) {
+      current = label;
+      return { label, body };
+    }
+    // 没有自己的标签 —— 那是上一个说话人这一轮的后续行
+    return { label: current, body };
+  });
   const joined = bodies.map((b) => b.body).join('\n');
   const cjkCount = (joined.match(new RegExp(CJK.source, 'gu')) || []).length;
   const letterCount = (joined.match(/[A-Za-z0-9]/g) || []).length;
