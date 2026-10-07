@@ -91,8 +91,8 @@ npm run dev
 
 ### 转录对比
 
-顶部有个 **Compare** 入口，下面是一条状态栏：My Notes / Granola / Otter 三个产品 ×
-transcript / summary，贴了的是绿点、没贴的是灰点，点状态栏直接打开 Compare。
+房间顶部有一张 **Result** 卡片：My Notes / Granola / Otter 三个产品 × transcript / summary，
+贴了的是绿点、没贴的是灰点。点它打开 Compare 弹窗（这是唯一入口）。
 
 Compare 弹窗分两个 tab：
 
@@ -304,7 +304,7 @@ Alice: Let's start with last week's numbers.
 ### 在房间之间切换
 
 房主在房间顶部的 **Switch room…** 里选一个自己的房间，会问一句「是否让同一房间的设备
-自动跟随进入新房间」。选是，这个房间里所有在线的设备会一起跳过去：收音设备、环境音
+自动跟随进入新房间」（房间里只有房主自己在线时不问，直接过去）。选是，这个房间里所有在线的设备会一起跳过去：收音设备、环境音
 设备角色不变，朗读设备按新房间的角色数重新分配（角色少于设备时有的设备没有台词）。
 
 ---

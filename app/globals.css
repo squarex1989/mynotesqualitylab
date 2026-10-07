@@ -647,3 +647,129 @@ table.scores .finding {
   border-radius: 8px;
   background: var(--panel-2);
 }
+
+/* ---------- Compare：Input 页 ---------- */
+.modal-head {
+  position: sticky;
+  top: -20px; /* 抵掉 .modal 的 padding，吸顶时贴住边 */
+  margin: -20px -20px 0;
+  padding: 20px 20px 0;
+  background: var(--bg);
+  z-index: 2;
+}
+.product-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.product-tabs button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 6px;
+}
+.product-tabs button.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.paste-field textarea {
+  margin-top: 8px;
+  font-size: 12.5px;
+}
+.paste-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.table-scroll {
+  overflow-x: auto;
+}
+
+/* ---------- 手机 ---------- */
+@media (max-width: 640px) {
+  .shell {
+    padding: 14px 12px 64px;
+  }
+  .card {
+    padding: 14px;
+    margin-bottom: 12px;
+  }
+  .topbar {
+    gap: 10px;
+    padding-bottom: 12px;
+    margin-bottom: 14px;
+  }
+  .roomcode {
+    font-size: 24px;
+  }
+  .spread {
+    flex-wrap: wrap;
+  }
+  /* iOS 上输入框字号小于 16px，一点进去整页就被放大 */
+  input,
+  select,
+  textarea,
+  .paste-field textarea {
+    font-size: 16px;
+  }
+  /* 手指点得到 */
+  button {
+    min-height: 38px;
+  }
+  button.small {
+    min-height: 32px;
+  }
+  .paste-actions button {
+    flex: 1 1 auto;
+    min-height: 44px;
+  }
+  .line {
+    grid-template-columns: 22px 72px 1fr;
+    gap: 6px;
+    padding: 6px 4px;
+  }
+  .toasts {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    max-width: none;
+  }
+  .unlock {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  /* 弹窗在手机上直接铺满 */
+  .modal-backdrop {
+    padding: 0;
+  }
+  .modal {
+    min-height: 100dvh;
+    border-radius: 0;
+    border: none;
+    padding: 14px;
+  }
+  .modal-head {
+    top: -14px;
+    margin: -14px -14px 0;
+    padding: 14px 14px 0;
+  }
+  .compare-status th,
+  .compare-status td {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+}
+
+/* Script 旁边那份开场面板：跟着滚动吸顶 */
+.sticky-col {
+  position: sticky;
+  top: 16px;
+}
+@media (max-width: 940px) {
+  .sticky-col {
+    position: static;
+  }
+}

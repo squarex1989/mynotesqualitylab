@@ -11,9 +11,12 @@ import type { RoomSummary } from '@/lib/types';
  */
 export function RoomSwitcher({
   currentRoomId,
+  othersOnline,
   onSwitch,
 }: {
   currentRoomId: string;
+  /** 除了房主这台，房间里还有几台在线设备。0 台就没什么可带的，不用问 */
+  othersOnline: number;
   onSwitch: (targetRoomId: string, follow: boolean) => Promise<string | null>;
 }) {
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
@@ -55,7 +58,13 @@ export function RoomSwitcher({
         onFocus={() => void load()}
         onChange={(e) => {
           const r = rooms.find((x) => x.id === e.target.value);
-          if (r) setTarget(r);
+          if (!r) return;
+          if (othersOnline === 0) {
+            // 只有房主自己：直接过去，不弹「要不要带设备」
+            void onSwitch(r.id, false).then((err) => err && setError(err));
+            return;
+          }
+          setTarget(r);
         }}
         style={{ width: 'auto', maxWidth: 260 }}
         title="Switch to another room you host"
@@ -68,6 +77,12 @@ export function RoomSwitcher({
           </option>
         ))}
       </select>
+
+      {!target && error && (
+        <span className="tiny" style={{ color: 'var(--err)' }}>
+          {error}
+        </span>
+      )}
 
       {target && (
         <div className="modal-backdrop" onClick={() => !busy && setTarget(null)}>

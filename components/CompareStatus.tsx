@@ -9,8 +9,9 @@ const FALLBACK_PRODUCTS = [
 ];
 
 /**
- * 房间里的状态栏：三个产品 × {transcript, summary} 有没有贴进来。
- * 贴了是绿点，没贴是灰点。点一下打开 Compare 弹窗的 Input 页（有权限的话）。
+ * 房间顶部的 Result 卡片：三个产品 × {transcript, summary} 有没有贴进来。
+ * 贴了是绿点，没贴是灰点。这是打开 Compare 弹窗的唯一入口：能编辑的人进 Input，
+ * 其余人有结果时进 Result。
  */
 export function CompareStatus({
   meta,
@@ -32,8 +33,9 @@ export function CompareStatus({
     <div
       className={`card compare-status${onOpen ? ' clickable' : ''}`}
       onClick={onOpen}
-      title={onOpen ? 'Open Compare → Input' : undefined}
+      title={onOpen ? 'Click to open' : undefined}
     >
+      <h2 style={{ margin: '0 0 6px' }}>Result</h2>
       <table>
         <thead>
           <tr>

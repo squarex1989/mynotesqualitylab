@@ -3,6 +3,13 @@
 
 const MIN_OVERLAP_MS = 400;
 
+// 以省略号 / 破折号收尾的句子是「话没说完就被接过去了」（「就是…」「我觉得——」）。
+// 下一句要在它念完之前插进来：TTS 读到省略号会自己拖一个停顿，音频尾巴上还有一段静音，
+// 照常等它放完再空 gap 毫秒，听起来就是「说完了，过了一会儿才有人接话」，没有打断感。
+export const TRAILING_OFF = /(\.{2,}|…+|—+|-{2,}|–)\s*["'”’」』)）]?\s*$/;
+// 插进去多早：盖住 TTS 的拖音和尾部静音，再压上最后一点尾音
+const CUT_IN_MS = 800;
+
 /**
  * @param {object} room      rooms 表的一行
  * @param {Array}  lines     [{idx, speaker, content}]
@@ -18,6 +25,7 @@ export function buildSchedule(room, lines, speakerMap, audioMap, fallbackDevice)
 
   const items = [];
   let lastChaosAt = 0; // 上一次抢话发生在时间线的哪一刻；从 0 起算，所以第一次抢话在 ~20s 后
+  let prevContent = '';
 
   for (const line of lines) {
     const audio = audioMap.get(line.idx);
@@ -30,6 +38,7 @@ export function buildSchedule(room, lines, speakerMap, audioMap, fallbackDevice)
     const volume = Math.max(0, Math.min(1, (sp?.volume ?? 100) / 100));
 
     if (items.length === 0) {
+      prevContent = line.content;
       items.push({
         idx: line.idx,
         speaker: line.speaker,
@@ -70,7 +79,15 @@ export function buildSchedule(room, lines, speakerMap, audioMap, fallbackDevice)
       }
     }
 
-    const startMs = Math.round(overlap > 0 ? prevEnd - overlap : prevEnd + gap);
+    // 上一句话没说完（省略号 / 破折号收尾）：有序无序都一样，下一句直接插进来
+    const cutIn = overlap === 0 && TRAILING_OFF.test(prevContent);
+    if (cutIn && differentDevice) {
+      overlap = Math.round(Math.min(CUT_IN_MS, prev.durationMs * 0.4, duration * 0.8));
+    }
+
+    // 同一台设备上不能重叠，被打断时就紧接着开口，不留空
+    const startMs = Math.round(overlap > 0 ? prevEnd - overlap : prevEnd + (cutIn ? 0 : gap));
+    prevContent = line.content;
 
     if (overlap > 0) {
       // 被抢的那句从重叠开始处压低音量。这里必须和 startMs 用同一个取整后的

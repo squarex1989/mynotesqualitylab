@@ -382,8 +382,23 @@ export function CompareModal({
     if (!canEdit) setTab('result');
   }, [canEdit]);
 
-  // 未保存的草稿：`${产品}:${字段}` -> 文本。保存后回落到服务端那份。
+  // 草稿：`${产品}:${字段}` -> 文本。停手一会儿自动保存；服务端那份回来和草稿一致了
+  // 才丢掉草稿 —— 发出去就丢的话，等广播回来的那一下框里会闪回旧文本。
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  // 当前在 Input 里编辑哪个产品。手机上一屏只放一个，三个叠在一起要滚很久
+  const [active, setActive] = useState<string | null>(null);
+  // 剪贴板读不了时（非 https、用户拒绝）在对应的框下面提示长按粘贴
+  const [pasteHint, setPasteHint] = useState<string | null>(null);
+  // 打开时停在第一个还没贴全的产品上；之后只随用户切换，贴完不自己跳走
+  useEffect(() => {
+    if (active || !products.length) return;
+    const first = products.find(
+      (p) => !byProduct.get(p.id)?.transcript?.trim() || !byProduct.get(p.id)?.summary?.trim()
+    );
+    setActive((first ?? products[0]).id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [products.length]);
+  const textRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
   const [terms, setTerms] = useState(glossary);
   const [copied, setCopied] = useState(false);
   const fileRefs = useRef<Record<string, HTMLInputElement | null>>({});
@@ -400,15 +415,61 @@ export function CompareModal({
   const dirty = (id: string, f: Field) =>
     drafts[k(id, f)] !== undefined && drafts[k(id, f)] !== saved(id, f);
 
-  const save = (id: string, f: Field) => {
-    onPut(id, { [f]: textOf(id, f) });
-    setDrafts(({ [k(id, f)]: _drop, ...rest }) => rest);
-  };
+  const save = (id: string, f: Field) => onPut(id, { [f]: textOf(id, f) });
+
+  // 服务端的值追上草稿了 → 草稿可以丢了
+  useEffect(() => {
+    setDrafts((d) => {
+      const next = { ...d };
+      let changed = false;
+      for (const key of Object.keys(d)) {
+        const [id, f] = key.split(':') as [string, Field];
+        if ((byProduct.get(id)?.[f] ?? '').trim() === d[key].trim()) {
+          delete next[key];
+          changed = true;
+        }
+      }
+      return changed ? next : d;
+    });
+  }, [byProduct]);
+
+  // 停手 800ms 自动保存。收音设备在手机上贴完就走，不该还要找一个 Save 按钮
+  useEffect(() => {
+    if (!canEdit) return;
+    const timer = setTimeout(() => {
+      for (const key of Object.keys(drafts)) {
+        const [id, f] = key.split(':') as [string, Field];
+        if (dirty(id, f)) onPut(id, { [f]: drafts[key] });
+      }
+    }, 800);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drafts, canEdit]);
+
+  const setDraft = (id: string, f: Field, text: string) =>
+    setDrafts((d) => ({ ...d, [k(id, f)]: text }));
 
   const loadFile = async (id: string, f: Field, file: File) => {
     if (file.size > 4 * 1024 * 1024) return;
-    const text = await file.text();
-    setDrafts((d) => ({ ...d, [k(id, f)]: text }));
+    setDraft(id, f, await file.text());
+  };
+
+  /** 从剪贴板读出来整段替换。读不了就把焦点给输入框，提示长按粘贴 */
+  const pasteFromClipboard = async (id: string, f: Field) => {
+    setPasteHint(null);
+    try {
+      if (!navigator.clipboard?.readText) throw new Error('no clipboard API');
+      const text = await navigator.clipboard.readText();
+      if (!text.trim()) {
+        setPasteHint(`${k(id, f)}|The clipboard is empty — copy the ${FIELD_LABEL[f].toLowerCase()} first.`);
+        return;
+      }
+      setDraft(id, f, text);
+      onPut(id, { [f]: text }); // 粘贴是明确的动作，马上存，不等防抖
+    } catch {
+      textRefs.current[k(id, f)]?.focus();
+      setPasteHint(`${k(id, f)}|Long-press the box and choose Paste.`);
+    }
   };
 
   /** 转录有没保存的改动就先存再打分 —— 同一个 socket 上按顺序处理，打分拿到的是新文本 */
@@ -584,45 +645,67 @@ export function CompareModal({
   const field = (p: { id: string; label: string }, f: Field) => {
     const text = textOf(p.id, f);
     const key = k(p.id, f);
+    const hint = pasteHint?.startsWith(`${key}|`) ? pasteHint.slice(key.length + 1) : null;
     return (
-      <div>
+      <div className="paste-field">
         <div className="spread">
-          <strong className="tiny">{FIELD_LABEL[f]}</strong>
-          {canEdit && (
-            <div className="row" style={{ gap: 6 }}>
-              <button className="small ghost" onClick={() => fileRefs.current[key]?.click()}>
-                Upload file
-              </button>
-              <input
-                ref={(el) => {
-                  fileRefs.current[key] = el;
-                }}
-                type="file"
-                accept=".txt,.md,.vtt,.srt,.json,text/plain"
-                style={{ display: 'none' }}
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) void loadFile(p.id, f, file);
-                  e.target.value = '';
-                }}
-              />
-              {dirty(p.id, f) && (
-                <button className="small primary" onClick={() => save(p.id, f)}>
-                  Save
-                </button>
-              )}
-            </div>
-          )}
+          <strong>{FIELD_LABEL[f]}</strong>
+          <span className="tiny" style={{ color: dirty(p.id, f) ? 'var(--accent)' : 'var(--muted)' }}>
+            {dirty(p.id, f)
+              ? 'Saving…'
+              : text.trim()
+                ? `Saved · ${text.trim().length.toLocaleString()} chars`
+                : 'empty'}
+          </span>
         </div>
+        {canEdit && (
+          <div className="paste-actions">
+            <button className="primary" onClick={() => void pasteFromClipboard(p.id, f)}>
+              Paste from clipboard
+            </button>
+            <button onClick={() => fileRefs.current[key]?.click()}>Upload file</button>
+            {text && (
+              <button className="ghost" onClick={() => setDraft(p.id, f, '')}>
+                Clear
+              </button>
+            )}
+            <input
+              ref={(el) => {
+                fileRefs.current[key] = el;
+              }}
+              type="file"
+              accept=".txt,.md,.vtt,.srt,.json,text/plain"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void loadFile(p.id, f, file);
+                e.target.value = '';
+              }}
+            />
+          </div>
+        )}
+        {hint && (
+          <p className="tiny" style={{ color: 'var(--accent)', margin: '6px 0 0' }}>
+            {hint}
+          </p>
+        )}
         <textarea
-          rows={7}
+          ref={(el) => {
+            textRefs.current[key] = el;
+          }}
+          rows={8}
           value={text}
           readOnly={!canEdit}
           placeholder={
-            canEdit ? `Paste the ${FIELD_LABEL[f].toLowerCase()} from ${p.label}…` : 'Nothing pasted yet'
+            canEdit
+              ? `Copy the ${FIELD_LABEL[f].toLowerCase()} in ${p.label}, then paste it here…`
+              : 'Nothing pasted yet'
           }
           onChange={(e) => {
-            if (canEdit) setDrafts((d) => ({ ...d, [key]: e.target.value }));
+            if (canEdit) setDraft(p.id, f, e.target.value);
+          }}
+          onBlur={() => {
+            if (canEdit && dirty(p.id, f)) save(p.id, f);
           }}
           onDrop={
             canEdit
@@ -635,19 +718,20 @@ export function CompareModal({
                 }
               : undefined
           }
-          style={{ marginTop: 6, fontSize: 12.5 }}
         />
-        <div className="row tiny muted" style={{ marginTop: 4 }}>
-          <span>{text.trim() ? `${text.trim().length.toLocaleString()} chars` : 'empty'}</span>
-          {dirty(p.id, f) && <span style={{ color: 'var(--accent)' }}>unsaved</span>}
-        </div>
       </div>
     );
   };
 
+  const has = (id: string, f: Field) => Boolean(textOf(id, f).trim());
+  const complete = (id: string) => has(id, 'transcript') && has(id, 'summary');
+  const current = products.find((p) => p.id === active) ?? products[0];
+  const next = current ? products.slice(products.indexOf(current) + 1).find((p) => !complete(p.id)) : undefined;
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
         <div className="spread" style={{ marginBottom: 2 }}>
           <h2 style={{ margin: 0 }}>Compare</h2>
           <div className="row" style={{ gap: 6 }}>
@@ -675,8 +759,10 @@ export function CompareModal({
             Result
           </button>
         </div>
+        </div>
 
-        {keyProblem && (
+        {/* 只跟打分有关，贴转录的人不需要看到 */}
+        {keyProblem && tab === 'result' && (
           <p className="tiny" style={{ color: 'var(--err)' }}>
             {keyProblem} — everything measured still works, but the two judged questions are skipped
             until you set the key and restart.
@@ -691,50 +777,87 @@ export function CompareModal({
 
         {tab === 'input' ? (
           <>
-            <p className="sub">
-              Paste (or upload) what each product produced — its transcript and its summary. Saving
-              a transcript clears its old score; hit Re-score to grade it against this room&apos;s
-              script ({referenceLineCount} lines).
+            <p className="sub" style={{ margin: '0 0 10px' }}>
+              In each product, copy its transcript and its summary, then paste them here — saved
+              automatically.
             </p>
 
-            {products.map((p) => {
-              const c = byProduct.get(p.id);
-              const scoring = c?.state === 'scoring';
-              const transcript = textOf(p.id, 'transcript');
-              return (
-                <div key={p.id} className="card" style={{ background: 'var(--panel-2)' }}>
-                  <div className="spread">
-                    <h2 style={{ margin: 0 }}>{p.label}</h2>
-                    <div className="row" style={{ gap: 6 }}>
-                      {c?.result && !scoring && <span className="pill ok">scored</span>}
-                      {canEdit && (
-                        <button
-                          className="small primary"
-                          disabled={scoring || !transcript.trim() || referenceLineCount === 0}
-                          onClick={() => rescore(p.id)}
-                        >
-                          {scoring ? 'Scoring…' : c?.result ? 'Re-score' : 'Score'}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  <div className="paste-grid">
-                    {field(p, 'transcript')}
-                    {field(p, 'summary')}
-                  </div>
-                  {c?.state === 'failed' && (
-                    <p className="tiny" style={{ color: 'var(--err)', marginBottom: 0 }}>
-                      Scoring failed: {c.error}
-                    </p>
-                  )}
-                </div>
-              );
-            })}
+            {/* 产品切换：每个产品带两个点，分别是 transcript / summary 有没有贴 */}
+            <div className="product-tabs">
+              {products.map((p) => (
+                <button
+                  key={p.id}
+                  className={current?.id === p.id ? 'active' : ''}
+                  onClick={() => {
+                    setActive(p.id);
+                    setPasteHint(null);
+                  }}
+                >
+                  <span>{p.label}</span>
+                  <span className="row" style={{ gap: 4 }}>
+                    <span className={`dot${has(p.id, 'transcript') ? ' ok' : ''}`} title="transcript" />
+                    <span className={`dot${has(p.id, 'summary') ? ' ok' : ''}`} title="summary" />
+                  </span>
+                </button>
+              ))}
+            </div>
 
-            <div className="card" style={{ background: 'var(--panel-2)' }}>
-              <label className="field">
+            {current &&
+              (() => {
+                const p = current;
+                const c = byProduct.get(p.id);
+                const scoring = c?.state === 'scoring';
+                const transcript = textOf(p.id, 'transcript');
+                return (
+                  <div className="card" style={{ background: 'var(--panel-2)' }}>
+                    <div className="spread" style={{ marginBottom: 10 }}>
+                      <h2 style={{ margin: 0 }}>{p.label}</h2>
+                      <div className="row" style={{ gap: 6 }}>
+                        {c?.result && !scoring && <span className="pill ok">scored</span>}
+                        {canEdit && (
+                          <button
+                            className="small"
+                            disabled={scoring || !transcript.trim() || referenceLineCount === 0}
+                            onClick={() => rescore(p.id)}
+                          >
+                            {scoring ? 'Scoring…' : c?.result ? 'Re-score' : 'Score'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="paste-grid">
+                      {field(p, 'transcript')}
+                      {field(p, 'summary')}
+                    </div>
+                    {c?.state === 'failed' && (
+                      <p className="tiny" style={{ color: 'var(--err)', marginBottom: 0 }}>
+                        Scoring failed: {c.error}
+                      </p>
+                    )}
+                    {canEdit && complete(p.id) && next && (
+                      <button
+                        className="primary"
+                        style={{ width: '100%', marginTop: 12 }}
+                        onClick={() => {
+                          setActive(next.id);
+                          setPasteHint(null);
+                        }}
+                      >
+                        Done — next: {next.label} →
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
+
+            {/* 词表不是每次都要动，收起来，别把手机屏幕占满 */}
+            <details className="card" style={{ background: 'var(--panel-2)' }}>
+              <summary className="tiny" style={{ cursor: 'pointer' }}>
+                Glossary {termCount ? `(${termCount})` : '(optional)'}
+              </summary>
+              <label className="field" style={{ marginTop: 10 }}>
                 <span className="spread">
-                  <span>Glossary — names, products, jargon (one per line)</span>
+                  <span>Names, products, jargon (one per line)</span>
                   <span className="muted">{termCount || 'none'}</span>
                 </span>
                 <textarea
@@ -761,7 +884,7 @@ export function CompareModal({
                 automatically. Chinese and Japanese have no capitalisation, so for those this list
                 is the only way to mark proper nouns.
               </p>
-            </div>
+            </details>
           </>
         ) : (
           <>
@@ -785,6 +908,7 @@ export function CompareModal({
                   Same four metrics side by side. No composite score — one number would hide which
                   kind of mistake each product actually makes.
                 </p>
+                <div className="table-scroll">
                 <table className="scores rank">
                   <thead>
                     <tr>
@@ -815,6 +939,7 @@ export function CompareModal({
                     })}
                   </tbody>
                 </table>
+                </div>
               </div>
             )}
 
