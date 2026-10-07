@@ -2,7 +2,7 @@
 
 import { useRef } from 'react';
 import { audioUrl } from '@/lib/api';
-import type { Device, DimensionKey, Meta, Speaker } from '@/lib/types';
+import type { Device, DimensionKey, Meta, Speaker, VoiceInfo } from '@/lib/types';
 
 interface Props {
   speakers: Speaker[];
@@ -29,6 +29,12 @@ interface Props {
 // 滑块会让人以为能拖到那里去。
 const VOLUME_OPTIONS = [100, 90, 80, 70, 60, 50, 40, 30, 20, 0];
 const volumeLabel = (v: number) => (v === 0 ? 'Muted' : `${v}%`);
+
+// 「English 3 · female · young · calm (Indian accent)」：口音恒在最后，放括号里
+const voiceOptionText = (v: VoiceInfo) =>
+  [[v.label, ...v.tags].join(' · '), v.accents.length ? `(${v.accents.join(', ')})` : '']
+    .filter(Boolean)
+    .join(' ');
 
 export function SpeakerList({
   speakers,
@@ -168,7 +174,7 @@ function SpeakerCard({
               >
                 {countryVoices.map((v) => (
                   <option key={v.id} value={v.id}>
-                    {[v.label, v.note].filter(Boolean).join(' · ')}
+                    {voiceOptionText(v)}
                   </option>
                 ))}
               </select>

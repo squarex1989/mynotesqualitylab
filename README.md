@@ -82,6 +82,10 @@ npm run dev
 界面上**先选国家，再从该国家下选音色**；切换国家会自动选中该国的第一个音色。
 想增删音色直接改这个文件（id 全局唯一），重启服务生效。
 
+下拉里每个音色显示 fish.audio 上的前 4 个标签（不含国家/语种名），口音排在最后、放括号里，
+带口音的音色在各国家内排在后面。标签按 id 从 `GET /model/{id}` 拉取（公开音色不需要 key），
+存在 `server/voice-tags.json`；改了 id 后跑 `node scripts/fetch-voice-tags.mjs` 刷新。
+
 不再读取 `$DATA_DIR/voices.fish.json`，也没有兜底表；`scripts/voices-from-ids.mjs`
 等脚本仍可用来查 fish.audio 上的音色信息，但不影响运行时的音色库。
 

@@ -2,7 +2,8 @@
 //
 // 这是唯一的音色来源 —— 不再读 $DATA_DIR/voices.fish.json，也没有兜底表。
 // id 是 fish.audio 音色库里的 32 位十六进制 reference_id。
-// note 只在已知口音时填写（英文那组）；其余音色只按序号命名。
+// accent 是人工标注的口音（英文那组）；标签（tags）另存在 voice-tags.json，由
+// scripts/fetch-voice-tags.mjs 从 fish.audio 按 id 拉取，不手写。
 // 想增删音色直接改这个文件，保持每个 id 全局唯一。
 
 export const VOICE_LIBRARY = [
@@ -11,14 +12,14 @@ export const VOICE_LIBRARY = [
     label: 'English',
     labelZh: 'English',
     voices: [
-      { id: 'b44a47b4e9d544a3a4d7c2f5028c43bf', label: 'English 1', note: 'Indian accent' },
+      { id: 'b44a47b4e9d544a3a4d7c2f5028c43bf', label: 'English 1', accent: 'Indian accent' },
       { id: '6611aa6363d845eab454c442ee75f5af', label: 'English 2' },
       { id: 'b58f292802824b6aa43ad25aa0b466a8', label: 'English 3' },
       { id: '77974fed34614080a505a797bb96357b', label: 'English 4' },
-      { id: '0aaa81da096d4cfdbd04674de86d893c', label: 'English 5', note: 'Chinese accent' },
-      { id: 'af4929ffe32045d2a3926b75672cefbf', label: 'English 6', note: 'British accent' },
-      { id: '1c6fb1152f794b36b76ce5b3138e6489', label: 'English 7', note: 'West Coast accent' },
-      { id: '6a4fe0e56380433a89e3253b531b10f8', label: 'English 8', note: 'Japanese accent' },
+      { id: '0aaa81da096d4cfdbd04674de86d893c', label: 'English 5', accent: 'Chinese accent' },
+      { id: 'af4929ffe32045d2a3926b75672cefbf', label: 'English 6', accent: 'British accent' },
+      { id: '1c6fb1152f794b36b76ce5b3138e6489', label: 'English 7', accent: 'West Coast accent' },
+      { id: '6a4fe0e56380433a89e3253b531b10f8', label: 'English 8', accent: 'Japanese accent' },
     ],
   },
   {
