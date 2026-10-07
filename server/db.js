@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS rooms (
   gap_ms        INTEGER NOT NULL DEFAULT 450,
   chaos_period_ms INTEGER NOT NULL DEFAULT 20000,
   duck_gain     REAL NOT NULL DEFAULT 0.5,
-  status        TEXT NOT NULL DEFAULT 'idle'      -- idle | playing
+  status        TEXT NOT NULL DEFAULT 'idle',     -- idle | playing
+  owner_id      TEXT                              -- 建房的账号（users.id）；账号体系之前的房间为空
 );
 
 CREATE TABLE IF NOT EXISTS lines (
@@ -121,6 +122,23 @@ CREATE TABLE IF NOT EXISTS devices (
   PRIMARY KEY (room_id, id)
 );
 
+-- 账号：Google 登录。游客不需要账号就能进房间、被分配角色；建房 / 导入要登录。
+CREATE TABLE IF NOT EXISTS users (
+  id          TEXT PRIMARY KEY,     -- Google 的 sub
+  email       TEXT NOT NULL,
+  name        TEXT,
+  picture     TEXT,
+  created_at  INTEGER NOT NULL,
+  last_login  INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  token       TEXT PRIMARY KEY,     -- 放在 HttpOnly cookie 里
+  user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at  INTEGER NOT NULL,
+  expires_at  INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_lines_room ON lines(room_id);
 CREATE INDEX IF NOT EXISTS idx_devices_room ON devices(room_id);
 `);
@@ -142,6 +160,8 @@ addColumnIfMissing('rooms', 'capture_device', 'TEXT');
 addColumnIfMissing('rooms', 'glossary', 'TEXT');
 addColumnIfMissing('devices', 'capture', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('comparisons', 'summary', 'TEXT');
+addColumnIfMissing('rooms', 'owner_id', 'TEXT'); // 建房的账号；老房间为空，登录后用本机的 host token 认领
+db.exec('CREATE INDEX IF NOT EXISTS idx_rooms_owner ON rooms(owner_id)');
 
 // 场景默认音源。放在这一层是为了让下面的回填和 createRoom 用同一份值。
 export const AMBIENCE_DEFAULTS = {

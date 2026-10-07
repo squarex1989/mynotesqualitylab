@@ -4,6 +4,7 @@ import express from 'express';
 import next from 'next';
 import { db, DATA_DIR, storageInfo } from './server/db.js';
 import { createApiRouter } from './server/api.js';
+import { createAuthRouter, authConfigured } from './server/auth.js';
 import { attachRealtime } from './server/realtime.js';
 import { apiKeyProblem, DEFAULT_TTS_MODEL } from './server/tts.js';
 
@@ -24,6 +25,7 @@ const httpServer = http.createServer(app);
 
 const { broadcast } = attachRealtime(httpServer);
 
+app.use('/api/auth', createAuthRouter());
 app.use('/api', createApiRouter({ broadcast }));
 app.all('*', (req, res) => handle(req, res));
 
@@ -44,6 +46,13 @@ httpServer.listen(port, '0.0.0.0', () => {
       console.log('            ⚠️  没挂上的话每次重部署，整份 transcript 都要重新 TTS 一遍。');
     }
   }
+  console.log(
+    authConfigured()
+      ? '  登录: Google（建房 / 导入需要登录，游客可以加入房间）'
+      : process.env.NODE_ENV === 'production'
+        ? '  ⚠️  没配 GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET —— 生产环境下谁都建不了房'
+        : '  登录: 没配 Google，本地开发不要求登录'
+  );
   console.log(`  TTS: Fish Audio · 新房间默认用 ${DEFAULT_TTS_MODEL}（房间设置里可切换）`);
 
   const problem = apiKeyProblem();

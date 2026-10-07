@@ -482,9 +482,9 @@ export function planImport({ name, text }) {
 }
 
 /** 建房间 + 写 transcript + 应用配置。失败时把半成品房间删掉。 */
-export function importTranscript({ name, text }) {
+export function importTranscript({ name, text }, { ownerId = null } = {}) {
   const plan = planImport({ name, text });
-  const { id, hostToken } = createRoom({ title: plan.title });
+  const { id, hostToken } = createRoom({ title: plan.title, ownerId });
   try {
     setTranscript(id, plan.parsed, { voices: plan.voicePlan, config: { pace: plan.pace } });
     updateRoomSettings(id, plan.settings);

@@ -56,6 +56,27 @@ npm run dev
 | `JUDGE_MODEL_GPT` | `openai/gpt-5.6-sol` | 想换裁判时覆盖 |
 | `JUDGE_MODEL_CLAUDE` | `anthropic/claude-opus-5` | 同上 |
 | `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | 本地测试时指向假裁判 |
+| `GOOGLE_CLIENT_ID` | 生产环境必填 | Google 登录。没配时生产环境谁都建不了房，本地开发不要求登录 |
+| `GOOGLE_CLIENT_SECRET` | 生产环境必填 | 同上 |
+| `PUBLIC_URL` | 按请求头推 | 可选，例如 `https://xxx.up.railway.app`。登录回调地址用它拼 |
+| `ALLOWED_EMAIL_DOMAINS` | 不限 | 可选，逗号分隔，例如 `zoom.us`，只允许这些域的账号登录 |
+
+### 账号（Google 登录）
+
+游客不用登录就能加入房间、被分配角色、当收音设备；**建房和导入 transcript 要登录**。
+房间归属到账号上：换台电脑登录同一个 Google 账号还是房主，「Your rooms」也跟着账号走。
+账号体系上线前建的房间，登录后会用本机存着的 host token 自动认领到账号上。
+
+配置步骤：
+
+1. [Google Cloud Console → APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials)
+   → Create credentials → OAuth client ID → Application type 选 **Web application**
+2. **Authorized JavaScript origins** 加：`https://你的域名`（本地调试再加 `http://localhost:3000`）
+3. **Authorized redirect URIs** 加：`https://你的域名/api/auth/google/callback`
+   （本地再加 `http://localhost:3000/api/auth/google/callback`）
+4. 第一次用还要配 OAuth consent screen（应用名、支持邮箱），只申请 `openid email profile`
+   这几个基础范围，不需要 Google 审核
+5. 把 Client ID 和 Client secret 填进环境变量 `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`，重启
 
 ### 模型
 
@@ -428,6 +449,7 @@ server/
   schedule.js          把台词排成带绝对偏移的时间线（有序 / 抢话 / 压音量）
   rooms.js             房间、角色、设备（朗读 / 环境音 / 收音）、分配、换房间、设置的读写
   importer.js          批量导入：读文件里的要求，挑口音音色、配房间、自动命名
+  auth.js              Google 登录（OAuth 授权码流程）、会话 cookie、建房 / 导入的登录要求
   api.js               HTTP 接口（建房、批量导入、上传、音频文件）
   realtime.js          Socket.IO：实时状态、房主操作、开播握手
 lib/                   前端：socket hook、Web Audio 引擎、时钟同步、YouTube 环境音

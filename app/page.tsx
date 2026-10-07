@@ -7,6 +7,8 @@ import { getDeviceName, rememberRoom, setDeviceName, setHostToken } from '@/lib/
 import { clampTitle, titleWeight, TITLE_MAX_WEIGHT } from '@/lib/roomName';
 import { RoomList } from '@/components/RoomList';
 import { BatchImport } from '@/components/BatchImport';
+import { AuthBar } from '@/components/AuthBar';
+import { signIn, useAuth } from '@/lib/auth';
 
 export default function Home() {
   const router = useRouter();
@@ -17,10 +19,19 @@ export default function Home() {
   const [roomName, setRoomName] = useState('');
   const [listKey, setListKey] = useState(0);
   const [ttsProblem, setTtsProblem] = useState<string | null>(null);
+  const auth = useAuth();
+  // 游客能加入房间，但建房 / 导入要先登录
+  const needLogin = !auth.loading && auth.required && !auth.user;
 
   useEffect(() => {
     setName(getDeviceName());
     api.meta().then((m) => setTtsProblem(m.ttsProblem)).catch(() => {});
+    // Google 登录失败时回调会把原因带在 ?authError= 上
+    const authError = new URLSearchParams(window.location.search).get('authError');
+    if (authError) {
+      setError(authError);
+      window.history.replaceState(null, '', '/');
+    }
   }, []);
 
   const saveName = (v: string) => {
@@ -60,7 +71,10 @@ export default function Home() {
 
   return (
     <div className="shell" style={{ paddingTop: 48 }}>
-      <h1 style={{ fontSize: 26, margin: '0 0 6px' }}>Transcript Reader</h1>
+      <div className="spread" style={{ alignItems: 'flex-start' }}>
+        <h1 style={{ fontSize: 26, margin: '0 0 6px' }}>Transcript Reader</h1>
+        <AuthBar auth={auth} />
+      </div>
       <p className="muted" style={{ marginTop: 0 }}>
         Upload a transcript, hand each speaker to a different computer, and let them read the conversation out loud in their own voices.
       </p>
@@ -96,6 +110,10 @@ export default function Home() {
 
       <div className="card">
         <h2>Create a room</h2>
+        {needLogin ? (
+          <SignInPrompt what="create a room" configured={auth.configured} />
+        ) : (
+        <>
         <label className="field" style={{ marginBottom: 12 }}>
           <span className="spread">
             <span>Room name (optional)</span>
@@ -116,6 +134,8 @@ export default function Home() {
         <button className="primary big" onClick={create} disabled={busy !== null}>
           {busy === 'create' ? 'Creating…' : 'Create room'}
         </button>
+        </>
+        )}
       </div>
 
       <div className="card">
@@ -143,7 +163,14 @@ export default function Home() {
 
       </div>
 
-      <BatchImport onImported={() => setListKey((k) => k + 1)} />
+      {needLogin ? (
+        <div className="card">
+          <h2>Import transcript files</h2>
+          <SignInPrompt what="import transcripts" configured={auth.configured} />
+        </div>
+      ) : (
+        <BatchImport onImported={() => setListKey((k) => k + 1)} />
+      )}
 
       {error && (
         <div className="card" style={{ borderColor: 'rgba(239,111,111,.4)', color: 'var(--err)' }}>
@@ -153,9 +180,30 @@ export default function Home() {
       </div>
 
       <div>
-        <RoomList refreshKey={listKey} />
+        {/* 登录后账号名下的房间同步到本机，同步完刷新一次列表 */}
+        <RoomList refreshKey={listKey + auth.syncedAt} />
       </div>
       </div>
     </div>
+  );
+}
+
+function SignInPrompt({ what, configured }: { what: string; configured: boolean }) {
+  return (
+    <>
+      <p className="sub">
+        Sign in to {what}. Guests can still join a room and read lines without an account.
+      </p>
+      {configured ? (
+        <button className="primary" onClick={signIn}>
+          Sign in with Google
+        </button>
+      ) : (
+        <p className="tiny" style={{ color: 'var(--err)', margin: 0 }}>
+          Google sign-in is not configured on this server — set GOOGLE_CLIENT_ID and
+          GOOGLE_CLIENT_SECRET.
+        </p>
+      )}
+    </>
   );
 }

@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { getHostToken, rememberRoom } from '@/lib/identity';
+import { useAuth } from '@/lib/auth';
+import { AuthBar } from '@/components/AuthBar';
 import { useRoom } from '@/lib/useRoom';
 import type { Meta } from '@/lib/types';
 import { TranscriptUploader } from '@/components/TranscriptUploader';
@@ -31,6 +33,8 @@ export default function RoomPage() {
 
   // 房主换房间并让设备跟随时，所有跟随的设备都会收到 room:goto
   const room = useRoom(roomId, { onGoto: (next) => router.push(`/room/${next}`) });
+  // 登录后把账号名下房间的 host token 同步到本机（换房间列表要用）
+  const auth = useAuth();
   const {
     connected,
     fatal,
@@ -109,8 +113,8 @@ export default function RoomPage() {
   }, [isCaptureDevice]);
 
   const switchRoom = async (target: string, follow: boolean): Promise<string | null> => {
-    const token = getHostToken(target);
-    if (!token) return 'This device is not the host of that room';
+    // 登录的建房人没有本机 token 也是房主，服务端会按账号认
+    const token = getHostToken(target) ?? '';
     if (follow) {
       const res = await actions.moveRoom(target, token, true);
       if (!res.ok) return res.error || 'Could not move the devices';
@@ -222,6 +226,7 @@ export default function RoomPage() {
           )}
           {isHost && <span className="pill on">host</span>}
           {state?.status === 'playing' && <span className="pill on">▶ reading</span>}
+          {auth.user && <AuthBar auth={auth} compact />}
           <Link href="/" className="pill">
             Home
           </Link>
