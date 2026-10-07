@@ -86,10 +86,11 @@ export function BatchImport({ onImported }: { onImported: () => void }) {
         </button>
       </div>
       <p className="sub" style={{ margin: 0 }}>
-        Pick up to {MAX_FILES} files — each becomes its own room, named and configured from what the
-        file asks for (speakers, accents, orderly / chaotic, ambience). Put requirements at the top,
-        e.g. <code>Accent: Indian</code>, <code>Order: chaotic</code>, <code>Noise: cafe</code>,
-        or in the file name. No audio is synthesized; change anything later inside the room.
+        Pick up to {MAX_FILES} files — each becomes its own room. Name each file{' '}
+        <strong>language + topic + speaker count + orderly / chaotic</strong>, e.g.{' '}
+        <code>英文_产品评审_3人_有序.txt</code> or <code>EN-Weekly sync-4p-chaotic.txt</code>; the
+        room is named and configured from that. No audio is synthesized; change anything later
+        inside the room.
       </p>
       <input
         ref={fileRef}

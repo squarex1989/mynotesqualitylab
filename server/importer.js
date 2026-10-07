@@ -113,9 +113,9 @@ export function extractHeader(text) {
 /* ------------------------------------------------------------------ */
 
 const LANGUAGE_NAMES = [
-  ['en', /^(en|eng|english|英文|英语)$/i],
-  ['zh', /^(zh|cn|chinese|mandarin|中文|汉语|普通话|国语)$/i],
-  ['ja', /^(ja|jp|japanese|日语|日文|日本语)$/i],
+  ['en', /^(en|eng|english|英文|英语|英語)$/i],
+  ['zh', /^(zh|cn|chinese|mandarin|中文|汉语|普通话|国语|中)$/i],
+  ['ja', /^(ja|jp|japanese|日语|日文|日本语|日本語)$/i],
   ['fr', /^(fr|french|français|法语|法文)$/i],
   ['de', /^(de|german|deutsch|德语|德文)$/i],
   ['es', /^(es|spanish|español|西班牙语|西语)$/i],
@@ -161,6 +161,70 @@ export function detectLanguage(text) {
     }
   }
   return best;
+}
+
+const ORDER_TOKEN = [
+  ['chaotic', /^(无序|乱序|混乱|抢话|chaotic|chaos|unordered|disordered|messy|random)$/i],
+  ['ordered', /^(有序|顺序|轮流|ordered|orderly|order|sequential)$/i],
+];
+const CN_NUM = { 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
+
+/**
+ * 文件名约定：语言 + 会议主题 + 人数 + 有序/无序，例如
+ *   英文_产品评审_3人_有序.txt
+ *   EN-Weekly sync-4p-chaotic.txt
+ *   zh 季度复盘 5 无序.md
+ * 分隔符用 _ - 空格 · | 都行，四段的顺序也不强求：认得出的语言、人数、有序/无序
+ * 各取第一个，剩下的拼起来就是主题。语言的两字母缩写（en/de/it…）只在开头认，
+ * 免得把主题里的 "it" "de" 当成语言；开头的「01」这种序号会跳过。
+ */
+export function parseFileName(stem) {
+  const tokens = String(stem || '')
+    .split(/[_\-–—\s·|,，、+]+/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const out = { language: null, count: null, order: null, topic: '' };
+
+  // 人数：优先带单位的（3人、4p、5 people）；没有的话取主题之后最后一个裸数字。
+  // 开头的「01」这种是序号，不算。
+  const COUNT = /^(\d{1,2}|[一二两三四五六七八九十])\s*(人|位|名|p|ppl|people|persons?|speakers?|pax)?$/i;
+  const toNum = (v) => Number(v) || CN_NUM[v];
+  let countAt = tokens.findIndex((t) => COUNT.exec(t)?.[2]);
+  if (countAt < 0) {
+    for (let i = tokens.length - 1; i > 0; i--) {
+      if (COUNT.test(tokens[i]) && !languageFromName(tokens[i])) {
+        countAt = i;
+        break;
+      }
+    }
+  }
+  if (countAt >= 0) out.count = toNum(COUNT.exec(tokens[countAt])[1]);
+
+  // 两字母缩写只在「第一个非序号」的位置认；完整名称（English、中文…）哪里都认
+  const head = tokens.findIndex((t) => !/^\d+$/.test(t));
+  const rest = [];
+  tokens.forEach((tok, i) => {
+    if (i === countAt) return;
+    if (!out.language) {
+      const lang = languageFromName(tok);
+      if (lang && (i === head || tok.length > 3 || /[^\x00-\x7f]/.test(tok))) {
+        out.language = lang;
+        return;
+      }
+    }
+    if (!out.order) {
+      const hit = ORDER_TOKEN.find(([, re]) => re.test(tok));
+      if (hit) {
+        out.order = hit[0];
+        return;
+      }
+    }
+    rest.push(tok);
+  });
+  // 开头的纯数字序号不进主题
+  while (rest.length > 1 && /^\d+$/.test(rest[0])) rest.shift();
+  out.topic = rest.join(' ');
+  return out;
 }
 
 export function detectOrder(text) {
@@ -357,15 +421,18 @@ export function planImport({ name, text }) {
   const parsed = parseTranscript(body, { mergeConsecutive: true });
   if (!parsed.lines.length) throw new Error(parsed.warnings[0] || 'No lines were parsed');
 
+  // 文件名是主要的要求来源：语言 + 会议主题 + 人数 + 有序/无序
+  const fromName = parseFileName(stem);
   const fileWords = stem.replace(/[_.]+/g, ' ');
   const freeText = [meta.requirements, fileWords].filter(Boolean).join(', ');
   const warnings = [...parsed.warnings];
 
   const language =
     languageFromName(meta.language) ||
+    fromName.language ||
     detectLanguage(parsed.lines.map((l) => l.content).join('\n'));
 
-  const orderMode = detectOrder(meta.order) || detectOrder(freeText) || 'ordered';
+  const orderMode = detectOrder(meta.order) || fromName.order || detectOrder(freeText) || 'ordered';
   const noise = { ...detectNoise(freeText), ...(meta.noise ? detectNoise(meta.noise) : {}) };
   if (meta.noise && !noise.noiseMode) noise.noiseMode = 'noisy'; // 「Noise: 有」之类
   const noiseMode = noise.noiseMode || 'quiet';
@@ -392,8 +459,9 @@ export function planImport({ name, text }) {
   }
   if (!meta.accent) globalAccents.push(...accentPhrases(freeText));
 
-  if (list.count && list.count !== parsed.speakers.length) {
-    warnings.push(`Requirements say ${list.count} speakers but the transcript has ${parsed.speakers.length}`);
+  const wantCount = list.count || fromName.count;
+  if (wantCount && wantCount !== parsed.speakers.length) {
+    warnings.push(`Requirements say ${wantCount} speakers but the transcript has ${parsed.speakers.length}`);
   }
 
   const voicePlan = planVoices(parsed.speakers, { language, hints, accents: globalAccents });
@@ -403,7 +471,7 @@ export function planImport({ name, text }) {
   ];
 
   const settings = { orderMode, noiseMode, ambienceKind };
-  const title = composeTitle(meta.title || stem, {
+  const title = composeTitle(meta.title || fromName.topic || stem, {
     language,
     speakerCount: parsed.speakers.length,
     accents: accentsUsed,

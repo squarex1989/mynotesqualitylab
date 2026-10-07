@@ -253,30 +253,41 @@ SRT / VTT 字幕和 `[{"speaker":"A","content":"..."}]` 这种 JSON 也认。时
 ### 批量导入
 
 首页 **Import transcript files** 一次最多选 100 个文件，每个文件建一个房间（只配置，
-不合成音频；进房间后随便改）。配置按文件里的要求来，优先级从高到低：
+不合成音频；进房间后随便改）。
 
-1. 文件开头的要求头 —— front matter 或者若干行 `Key: value`，中英文键名都认：
+**文件名就是要求**：`语言 + 会议主题 + 人数 + 有序/无序`，例如
 
-   ```
-   ---
-   Title: Weekly sync                                   # 标题 / 主题
-   Speakers: Alice (Indian accent, female), Bob, Carol  # 人数 / 参与者（括号里写口音、性别）
-   Accent: British                                      # 口音；也可以写 Alice: Indian, Bob: British
-   Language: en                                         # 语言（不写就按内容猜）
-   Order: chaotic                                       # 顺序：有序 / 无序
-   Noise: cafe                                          # 环境：安静 / 咖啡厅 / 机场
-   Glossary: Acme, Quicksilver                          # 术语
-   Pace: fast                                           # 语速
-   ---
-   Alice: Let's start with last week's numbers.
-   ```
+```
+英文_产品评审_3人_有序.txt
+EN-Weekly sync-4p-chaotic.txt
+zh 季度复盘 5 无序.md
+01_中文_周会_三人_无序.txt        # 开头的序号会跳过
+```
 
-2. 台词里名字后面的括号备注：`Alice (Indian accent): ...`
-3. 文件名：`07_chaotic_cafe_indian-accent.txt` 也能读出无序 + 咖啡厅 + 印度口音
+分隔符用 `_` `-` 空格 `·` `|` 都行。语言认中英文名称和两字母缩写（en/zh/ja/fr/de/es/pt/it/nl，
+缩写只在开头认）；人数认 `3人` `4p` `三人` 或主题后面的裸数字；有序/无序认
+`有序` `无序` `ordered` `chaotic`。剩下的就是会议主题，用作房间名。语言决定用哪个语种的音色
+（文件名没写才按内容猜）；人数和台词里实际的说话人数对不上时导入结果会提醒。
+
+文件名之外，文件开头也可以写更细的要求（优先级高于文件名）—— front matter 或者若干行
+`Key: value`，中英文键名都认：
+
+```
+---
+Speakers: Alice (Indian accent, female), Bob, Carol  # 括号里写口音、性别
+Accent: British                                      # 口音；也可以写 Alice: Indian, Bob: British
+Noise: cafe                                          # 环境：安静 / 咖啡厅 / 机场
+Glossary: Acme, Quicksilver                          # 术语
+Pace: fast                                           # 语速
+---
+Alice: Let's start with last week's numbers.
+```
+
+台词里名字后面的括号备注（`Alice (Indian accent): ...`）也算。
 
 没指名道姓的口音按顺序分给前几个说话人，其余说话人用该语种的无口音音色，同一房间里
-尽量不重复。房间名自动生成成 `标题 | EN·3p·Indian·Chaos·Cafe` 这种（标题没写就用文件名；
-有序、安静是默认值，不写进名字）。
+尽量不重复。房间名自动生成成 `会议主题 | EN·3p·Indian·Chaos·Cafe` 这种（有序、安静是默认值，
+不写进名字）。
 
 ### 设备角色
 

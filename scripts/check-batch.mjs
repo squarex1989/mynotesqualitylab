@@ -20,7 +20,7 @@ process.env.AMBIENCE_WAIT_MS = '700';
 
 const { attachRealtime } = await import('../server/realtime.js');
 const rooms = await import('../server/rooms.js');
-const { planImport, importTranscript } = await import('../server/importer.js');
+const { planImport, importTranscript, parseFileName } = await import('../server/importer.js');
 const { voices } = await import('../server/voices.js');
 const { db, audioPath } = await import('../server/db.js');
 const { io: connect } = await import('socket.io-client');
@@ -89,6 +89,30 @@ Carol: Three points week over week, or year over year?`,
   t('台词里名字后的括号备注也算要求', voiceOf(inline.voicePlan.Ana)?.accents.some((a) => /mexican/i.test(a)),
     inline.voicePlan.Ana);
   t('西班牙语内容 → 西班牙语', inline.language === 'es');
+
+  // 文件名约定：语言 + 会议主题 + 人数 + 有序/无序
+  const cases = [
+    ['英文_产品评审_3人_有序', { language: 'en', topic: '产品评审', count: 3, order: 'ordered' }],
+    ['EN-Weekly sync-4p-chaotic', { language: 'en', topic: 'Weekly sync', count: 4, order: 'chaotic' }],
+    ['zh 季度复盘 5 无序', { language: 'zh', topic: '季度复盘', count: 5, order: 'chaotic' }],
+    ['01_中文_周会_三人_无序', { language: 'zh', topic: '周会', count: 3, order: 'chaotic' }],
+    ['English_Top 10 ideas_3_ordered', { language: 'en', topic: 'Top 10 ideas', count: 3, order: 'ordered' }],
+    ['de_it support_2人_chaotic', { language: 'de', topic: 'it support', count: 2, order: 'chaotic' }],
+  ];
+  for (const [stem, want] of cases) {
+    const got = parseFileName(stem);
+    t(`文件名「${stem}」→ ${want.language} / ${want.topic} / ${want.count}人 / ${want.order}`,
+      got.language === want.language && got.topic === want.topic && got.count === want.count && got.order === want.order,
+      JSON.stringify(got));
+  }
+  const byName = planImport({
+    name: '英文_产品评审_3人_无序.txt',
+    text: '张三：我们先看一下上周的数据。\n李四：好的，我这边图表还没加载出来。',
+  });
+  t('文件名的语言优先于内容猜测', byName.language === 'en');
+  t('文件名的无序生效', byName.settings.orderMode === 'chaotic');
+  t('房间名用文件名里的主题', byName.title.startsWith('产品评审 | EN'), byName.title);
+  t('文件名的人数和台词对不上时提醒', byName.warnings.some((w) => /3 speakers/.test(w)), JSON.stringify(byName.warnings));
 
   const r = importTranscript({ name: 'demo.txt', text: 'Order: chaotic\nAlice: one two\nBob: three four' });
   const st = rooms.roomState(r.id);
