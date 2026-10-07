@@ -2,7 +2,14 @@
 
 // 环境音：把你给的 YouTube 链接塞进隐藏的 IFrame Player，只出声不出画。
 // 浏览器的自动播放策略要求先有一次用户手势，所以流程是
-//   init()（页面加载时静默建好 player） → arm()（用户点一下按钮）→ play()（开始 room 时程序触发）
+//   init()（页面加载时静默建好 player） → arm()（用户点一下按钮）
+//   → startAndWait()（开始 room 时程序触发，等真的出声了才返回，朗读设备再开始念）
+//
+// 环境音一律从第 20 秒开始放（链接里写了 ?t= 就按链接的）：这类长视频开头往往是
+// 片头、淡入或者一段安静，直接从 0 秒放，前几句等于在安静环境里念。
+
+/** 链接没写 ?t= 时从第几秒开始 */
+export const AMBIENCE_DEFAULT_START_S = 20;
 
 declare global {
   interface Window {
@@ -64,6 +71,8 @@ export class AmbiencePlayer {
   private ready = false;
   private armed = false;
   private wantVolume = 25;
+  private startS = AMBIENCE_DEFAULT_START_S;
+  private playingWaiters: (() => void)[] = [];
 
   get isReady() {
     return this.ready;
@@ -85,7 +94,9 @@ export class AmbiencePlayer {
     await loadApi();
     this.destroy();
     this.videoId = parsed.id;
+    this.startS = parsed.start || AMBIENCE_DEFAULT_START_S;
     this.ready = false;
+    const startS = this.startS;
 
     const host = document.createElement('div');
     container.appendChild(host);
@@ -101,7 +112,7 @@ export class AmbiencePlayer {
           disablekb: 1,
           loop: 1,
           playlist: parsed.id, // loop=1 对单个视频必须配 playlist
-          start: parsed.start,
+          start: startS,
           playsinline: 1,
         },
         events: {
@@ -112,7 +123,12 @@ export class AmbiencePlayer {
           },
           onStateChange: (e: any) => {
             // videos 偶尔会在结尾停住而不循环，兜一下
-            if (e.data === window.YT.PlayerState.ENDED) this.player.seekTo(parsed.start, true);
+            if (e.data === window.YT.PlayerState.ENDED) this.player.seekTo(startS, true);
+            if (e.data === window.YT.PlayerState.PLAYING) {
+              const waiters = this.playingWaiters;
+              this.playingWaiters = [];
+              waiters.forEach((w) => w());
+            }
           },
         },
       });
@@ -143,6 +159,35 @@ export class AmbiencePlayer {
     this.player.playVideo();
   }
 
+  /**
+   * 从起始秒开始放，等 YouTube 报告 PLAYING 再多等一点（PLAYING 和真正出声之间
+   * 还隔着一小段解码），返回 true；超时没进 PLAYING 返回 false。
+   */
+  async startAndWait(timeoutMs = 8000): Promise<boolean> {
+    if (!this.player || !this.ready) return false;
+    const playing = new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => resolve(false), timeoutMs);
+      this.playingWaiters.push(() => {
+        clearTimeout(timer);
+        resolve(true);
+      });
+    });
+    try {
+      this.player.seekTo(this.startS, true);
+    } catch {
+      /* noop */
+    }
+    this.play();
+    // 已经在放（比如上一场没停干净）就不会再触发一次 PLAYING
+    if (this.player.getPlayerState?.() === window.YT?.PlayerState?.PLAYING) {
+      this.playingWaiters = [];
+      return true;
+    }
+    const ok = await playing;
+    if (ok) await new Promise((r) => setTimeout(r, 400));
+    return ok;
+  }
+
   stop() {
     if (!this.player || !this.ready) return;
     try {
@@ -166,5 +211,6 @@ export class AmbiencePlayer {
     this.player = null;
     this.ready = false;
     this.armed = false;
+    this.playingWaiters = [];
   }
 }

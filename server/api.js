@@ -24,6 +24,7 @@ import {
   apiKeyProblem as judgeKeyProblem,
 } from './judge.js';
 import { UER_MODEL } from './uer.js';
+import { importTranscript, MAX_IMPORT_FILES, MAX_IMPORT_FILE_BYTES } from './importer.js';
 
 const HASH_RE = /^[a-f0-9]{32}$/;
 
@@ -73,6 +74,29 @@ export function createApiRouter({ broadcast }) {
   router.post('/rooms', (req, res) => {
     const { id, hostToken } = createRoom({ title: req.body?.title });
     res.json({ id, hostToken });
+  });
+
+  // 批量导入：每个 transcript 文件建一个房间，按文件里的要求配好（不合成音频）。
+  // 前端会把最多 100 个文件按体积分批发过来；单个文件失败不影响其它文件。
+  router.post('/rooms/import', (req, res) => {
+    const files = Array.isArray(req.body?.files) ? req.body.files : [];
+    if (!files.length) return res.status(400).json({ error: 'No files' });
+    if (files.length > MAX_IMPORT_FILES) {
+      return res.status(400).json({ error: `At most ${MAX_IMPORT_FILES} files at a time` });
+    }
+    const results = files.map((f) => {
+      const name = String(f?.name || 'transcript.txt').slice(0, 200);
+      const text = String(f?.text ?? '');
+      if (Buffer.byteLength(text) > MAX_IMPORT_FILE_BYTES) {
+        return { file: name, ok: false, error: 'File is over 4MB' };
+      }
+      try {
+        return importTranscript({ name, text });
+      } catch (err) {
+        return { file: name, ok: false, error: err.message || String(err) };
+      }
+    });
+    res.json({ results });
   });
 
   // 首页那个「我创建的房间」列表用的。房间号本身就是凭证，所以不另做鉴权 ——

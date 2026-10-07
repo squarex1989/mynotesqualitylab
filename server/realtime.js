@@ -21,8 +21,11 @@ import {
   generationProgress,
   ambienceUrlFor,
   getComparisons,
-  putComparisonTranscript,
+  putComparison,
   setComparisonState,
+  getDevices,
+  setDeviceCapture,
+  moveDevicesToRoom,
   setGlossary,
   referenceTranscript,
 } from './rooms.js';
@@ -33,6 +36,9 @@ import { lookupAudio } from './tts.js';
 
 const PREPARE_TIMEOUT_MS = 15000; // 等设备预加载的上限
 const GO_LEAD_MS = 1200; // 所有设备就绪后再留这么久做最后对齐
+// 有环境音时先让 YouTube 出声、再开始念。等它报「出声了」的上限 —— 超时就照常开始，
+// 不能让一个卡住的播放器拖住整场。
+const AMBIENCE_WAIT_MS = Number(process.env.AMBIENCE_WAIT_MS) || 10000;
 
 // 设备离线超过这么久才清掉 —— 断线重连、切个 App 通常几秒到几十秒就自己好了，
 // 定太短会把正在用的设备从列表里删掉，「Read by」跟着变成未分配，反而添乱。
@@ -131,10 +137,11 @@ export function attachRealtime(httpServer) {
     live.add(socket.id);
     liveSockets.set(liveKey, live);
 
-    upsertDevice(roomId, { id: deviceId, name: deviceName, isHost });
+    const cameOnline = upsertDevice(roomId, { id: deviceId, name: deviceName, isHost });
 
-    // 第一台进来的设备如果还没人分到角色，顺手分一下
-    if (getSpeakers(roomId).some((s) => !s.device_id)) autoAssignDevices(roomId);
+    // 有设备进来（或者有角色还没人念）就分一下：新设备会从最忙的设备那里接过角色。
+    // 已有的分配只要设备还在就保留，所以房主手动改过的不会被无故打乱。
+    if (cameOnline || getSpeakers(roomId).some((s) => !s.device_id)) autoAssignDevices(roomId);
 
     socket.emit('hello', { roomId, deviceId, isHost, serverNow: Date.now() });
     socket.emit('lines', { lines: getLines(roomId) });
@@ -158,12 +165,17 @@ export function attachRealtime(httpServer) {
       broadcast(roomId);
     });
 
-    // ---------------- 转录对比（写：房主专属；读：谁都能看，走 state 广播）----------------
+    // ---------------- 转录对比（写：房主和收音设备；读：谁都能看，走 state 广播）----------------
+    // 收音设备是真正录音的那台机器，转录和摘要就是在它上面贴进来的，所以它也能写。
+    // 每次现查 —— 房主随时可能把它设成 / 取消收音设备。
+    const canWriteCompare = () =>
+      socket.data.isHost || getDevices(roomId).some((d) => d.id === deviceId && d.capture);
+
     const compareOnly = (handler) => async (payload) => {
-      if (!socket.data.isHost) {
+      if (!canWriteCompare()) {
         socket.emit('toast', {
           kind: 'error',
-          message: 'Only the host can edit or score comparisons',
+          message: 'Only the host or a capture device can edit or score comparisons',
         });
         return;
       }
@@ -176,9 +188,9 @@ export function attachRealtime(httpServer) {
 
     socket.on(
       'compare:put',
-      compareOnly(({ product, transcript }) => {
+      compareOnly(({ product, transcript, summary }) => {
         if (!isProduct(product)) throw new Error('Unknown product');
-        putComparisonTranscript(roomId, product, transcript);
+        putComparison(roomId, product, { transcript, summary });
         broadcast(roomId);
       })
     );
@@ -201,6 +213,7 @@ export function attachRealtime(httpServer) {
 
         const row = getComparisons(roomId).find((c) => c.product === product);
         if (!row?.transcript?.trim()) throw new Error('Paste that product\'s transcript first');
+        // 摘要的评估逻辑还没做，这里只给转录打分
         if (row.state === 'scoring') return; // 已经在跑了
 
         setComparisonState(roomId, product, 'scoring');
@@ -285,6 +298,43 @@ export function attachRealtime(httpServer) {
       })
     );
 
+    // 收音设备：只录音、贴转录，不念台词
+    socket.on(
+      'device:capture',
+      hostOnly((payload) => {
+        setDeviceCapture(roomId, String(payload.deviceId || ''), Boolean(payload.on));
+        broadcast(roomId);
+      })
+    );
+
+    // 房主换房间，可选把这个房间里在线的设备一起带过去（收音 / 环境音角色不变，
+    // 朗读设备按新房间的角色数重新分配）
+    socket.on(
+      'room:move',
+      hostOnly((payload, ack) => {
+        const reply = typeof ack === 'function' ? ack : () => {};
+        const target = getRoom(payload.targetRoomId);
+        if (!target || target.id === roomId) {
+          reply({ ok: false, error: 'Pick a different, existing room' });
+          return;
+        }
+        if (!isHostToken(target, payload.targetHostToken)) {
+          reply({ ok: false, error: 'You are not the host of that room' });
+          return;
+        }
+        if (!payload.follow) {
+          reply({ ok: true, moved: 0 });
+          return;
+        }
+        if (sessions.has(roomId)) stopRoom(io, roomId, 'moved');
+        const online = getDevices(roomId).filter((d) => d.online).map((d) => d.id);
+        const moved = moveDevicesToRoom(roomId, target.id, online);
+        broadcast(target.id);
+        io.to(roomId).emit('room:goto', { roomId: target.id, from: roomId });
+        reply({ ok: true, moved: moved.length });
+      })
+    );
+
     socket.on(
       'room:settings',
       hostOnly((payload) => {
@@ -322,6 +372,13 @@ export function attachRealtime(httpServer) {
       hostOnly(() => stopRoom(io, roomId, 'host'))
     );
 
+    // 环境音设备报告 YouTube 已经出声 —— 这时朗读设备才开始念
+    socket.on('ambience:playing', ({ token } = {}) => {
+      const session = sessions.get(roomId);
+      if (!session || session.token !== token || session.ambienceDevice !== deviceId) return;
+      launch(io, roomId);
+    });
+
     socket.on('play:ready', ({ token } = {}) => {
       const session = sessions.get(roomId);
       if (!session || session.started || session.token !== token) return;
@@ -342,6 +399,10 @@ export function attachRealtime(httpServer) {
       const session = sessions.get(roomId);
       if (session && !session.started && session.pending.delete(deviceId) && session.pending.size === 0) {
         go(io, roomId);
+      }
+      // 正在等的环境音设备掉线了，就别再等它出声
+      if (session?.awaitingAmbience && session.ambienceDevice === deviceId && !liveSockets.has(liveKey)) {
+        launch(io, roomId);
       }
       broadcast(roomId);
     });
@@ -383,7 +444,9 @@ function startRoom(io, roomId, socket) {
   }
 
   const speakerMap = new Map(getSpeakers(roomId).map((s) => [s.name, s]));
-  const hostDevice = room.host_device;
+  // 没分到设备的角色兜底给房主 —— 除非房主这台是收音设备，收音设备绝不出声
+  const hostRow = getDevices(roomId).find((d) => d.id === room.host_device);
+  const hostDevice = hostRow && !hostRow.capture ? room.host_device : null;
   const { items, totalMs, overlaps } = buildSchedule(
     room,
     getLines(roomId),
@@ -404,7 +467,19 @@ function startRoom(io, roomId, socket) {
   if (ambienceOn && room.ambience_device) pending.add(room.ambience_device);
 
   const token = `${roomId}-${Date.now()}`;
-  const session = { token, items, totalMs, pending, started: false, timer: null, endTimer: null };
+  const session = {
+    token,
+    items,
+    totalMs,
+    pending,
+    started: false,
+    launched: false,
+    timer: null,
+    endTimer: null,
+    ambienceTimer: null,
+    ambienceDevice: ambienceOn ? room.ambience_device : null,
+    awaitingAmbience: false,
+  };
   sessions.set(roomId, session);
 
   setRoomStatus(roomId, 'playing');
@@ -445,6 +520,34 @@ function go(io, roomId) {
   session.started = true;
   clearTimeout(session.timer);
 
+  // 有环境音：先让环境音设备开播，等它报告 YouTube 真的出声了再让大家开始念。
+  // YouTube 从按下播放到出声要缓冲零点几秒到几秒，同时开始的话前几句是在
+  // 安静的房间里念的，测不到「嘈杂环境」。
+  const amb = session.ambienceDevice;
+  if (amb && liveSockets.has(`${roomId}:${amb}`)) {
+    session.awaitingAmbience = true;
+    io.to(roomId).emit('ambience:start', { token: session.token, deviceId: amb });
+    session.ambienceTimer = setTimeout(() => {
+      if (session.launched) return;
+      io.to(roomId).emit('toast', {
+        kind: 'info',
+        message: 'The ambience device never confirmed YouTube was playing — starting anyway',
+      });
+      launch(io, roomId);
+    }, AMBIENCE_WAIT_MS);
+    return;
+  }
+  launch(io, roomId);
+}
+
+/** 真正开始：给所有设备同一个起点 */
+function launch(io, roomId) {
+  const session = sessions.get(roomId);
+  if (!session || session.launched) return;
+  session.launched = true;
+  session.awaitingAmbience = false;
+  clearTimeout(session.ambienceTimer);
+
   const startAt = Date.now() + GO_LEAD_MS;
   io.to(roomId).emit('play:go', { token: session.token, startAt, totalMs: session.totalMs });
 
@@ -458,6 +561,7 @@ function stopRoom(io, roomId, reason) {
   if (session) {
     clearTimeout(session.timer);
     clearTimeout(session.endTimer);
+    clearTimeout(session.ambienceTimer);
     sessions.delete(roomId);
   }
   setRoomStatus(roomId, 'idle');

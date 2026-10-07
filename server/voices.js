@@ -35,6 +35,12 @@ function describe(v) {
   return { tags: plain.slice(0, MAX_TAGS - accents.length), accents };
 }
 
+/** fish.audio 标签里第一个出现的 male / female；都没有算 neutral */
+function genderOf(v) {
+  const raw = VOICE_TAGS[v.id]?.tags ?? [];
+  return raw.find((t) => t === 'male' || t === 'female') || 'neutral';
+}
+
 // 每个国家内：带口音的排在后面，别让口音音色成为默认的第一个
 const ALL_VOICES = VOICE_LIBRARY.flatMap((c) => {
   const items = c.voices.map((v) => ({ v, ...describe(v) }));
@@ -42,7 +48,7 @@ const ALL_VOICES = VOICE_LIBRARY.flatMap((c) => {
   return sorted.map(({ v, tags, accents }, i) => ({
     id: v.id,
     label: `${c.label} ${i + 1}`,
-    gender: 'neutral',
+    gender: genderOf(v),
     note: accents.join(', '),
     tags,
     accents,

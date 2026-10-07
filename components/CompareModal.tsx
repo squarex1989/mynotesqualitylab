@@ -12,14 +12,17 @@ import type {
   UerResult,
 } from '@/lib/types';
 
+export type CompareTab = 'input' | 'result';
+
 interface Props {
   meta: Meta | null;
-  /** 只有 host 能改产品的转录、编 glossary、发起打分；其余人只看结果 */
-  isHost: boolean;
+  /** 房主和收音设备能贴转录 / 摘要、编 glossary、发起打分；其余人只看结果 */
+  canEdit: boolean;
   comparisons: Comparison[];
   referenceLineCount: number;
   glossary: string;
-  onPut: (product: string, transcript: string) => void;
+  initialTab?: CompareTab;
+  onPut: (product: string, patch: { transcript?: string; summary?: string }) => void;
   onScore: (product: string) => void;
   onGlossary: (text: string) => void;
   onClose: () => void;
@@ -348,12 +351,16 @@ function Evidence({ items, label }: { items: Finding[]; label: string }) {
   );
 }
 
+type Field = 'transcript' | 'summary';
+const FIELD_LABEL: Record<Field, string> = { transcript: 'Transcript', summary: 'Summary' };
+
 export function CompareModal({
   meta,
-  isHost,
+  canEdit,
   comparisons,
   referenceLineCount,
   glossary,
+  initialTab,
   onPut,
   onScore,
   onGlossary,
@@ -365,8 +372,17 @@ export function CompareModal({
   const keyProblem = meta?.compare.problem;
 
   const byProduct = useMemo(() => new Map(comparisons.map((c) => [c.product, c])), [comparisons]);
+  const anyResult = products.some((p) => byProduct.get(p.id)?.result);
 
-  // 未保存的草稿：产品 id -> 文本。保存后回落到服务端那份。
+  // 能编辑的人默认落在 Input；只能看的人只有 Result 可看
+  const [tab, setTab] = useState<CompareTab>(
+    canEdit ? initialTab ?? (anyResult ? 'result' : 'input') : 'result'
+  );
+  useEffect(() => {
+    if (!canEdit) setTab('result');
+  }, [canEdit]);
+
+  // 未保存的草稿：`${产品}:${字段}` -> 文本。保存后回落到服务端那份。
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [terms, setTerms] = useState(glossary);
   const [copied, setCopied] = useState(false);
@@ -378,14 +394,27 @@ export function CompareModal({
     if (!focused.current) setTerms(glossary);
   }, [glossary]);
 
-  const textOf = (id: string) => drafts[id] ?? byProduct.get(id)?.transcript ?? '';
-  const dirty = (id: string) =>
-    drafts[id] !== undefined && drafts[id] !== (byProduct.get(id)?.transcript ?? '');
+  const k = (id: string, f: Field) => `${id}:${f}`;
+  const saved = (id: string, f: Field) => byProduct.get(id)?.[f] ?? '';
+  const textOf = (id: string, f: Field) => drafts[k(id, f)] ?? saved(id, f);
+  const dirty = (id: string, f: Field) =>
+    drafts[k(id, f)] !== undefined && drafts[k(id, f)] !== saved(id, f);
 
-  const loadFile = async (id: string, file: File) => {
+  const save = (id: string, f: Field) => {
+    onPut(id, { [f]: textOf(id, f) });
+    setDrafts(({ [k(id, f)]: _drop, ...rest }) => rest);
+  };
+
+  const loadFile = async (id: string, f: Field, file: File) => {
     if (file.size > 4 * 1024 * 1024) return;
     const text = await file.text();
-    setDrafts((d) => ({ ...d, [id]: text }));
+    setDrafts((d) => ({ ...d, [k(id, f)]: text }));
+  };
+
+  /** 转录有没保存的改动就先存再打分 —— 同一个 socket 上按顺序处理，打分拿到的是新文本 */
+  const rescore = (id: string) => {
+    if (dirty(id, 'transcript')) save(id, 'transcript');
+    onScore(id);
   };
 
   /**
@@ -550,16 +579,79 @@ export function CompareModal({
     }
   };
 
-  const anyResult = products.some((p) => byProduct.get(p.id)?.result);
   const termCount = terms.split(/[\n,;、，；]/).filter((t) => t.trim()).length;
+
+  const field = (p: { id: string; label: string }, f: Field) => {
+    const text = textOf(p.id, f);
+    const key = k(p.id, f);
+    return (
+      <div>
+        <div className="spread">
+          <strong className="tiny">{FIELD_LABEL[f]}</strong>
+          {canEdit && (
+            <div className="row" style={{ gap: 6 }}>
+              <button className="small ghost" onClick={() => fileRefs.current[key]?.click()}>
+                Upload file
+              </button>
+              <input
+                ref={(el) => {
+                  fileRefs.current[key] = el;
+                }}
+                type="file"
+                accept=".txt,.md,.vtt,.srt,.json,text/plain"
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void loadFile(p.id, f, file);
+                  e.target.value = '';
+                }}
+              />
+              {dirty(p.id, f) && (
+                <button className="small primary" onClick={() => save(p.id, f)}>
+                  Save
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+        <textarea
+          rows={7}
+          value={text}
+          readOnly={!canEdit}
+          placeholder={
+            canEdit ? `Paste the ${FIELD_LABEL[f].toLowerCase()} from ${p.label}…` : 'Nothing pasted yet'
+          }
+          onChange={(e) => {
+            if (canEdit) setDrafts((d) => ({ ...d, [key]: e.target.value }));
+          }}
+          onDrop={
+            canEdit
+              ? (e) => {
+                  const file = e.dataTransfer.files?.[0];
+                  if (file) {
+                    e.preventDefault();
+                    void loadFile(p.id, f, file);
+                  }
+                }
+              : undefined
+          }
+          style={{ marginTop: 6, fontSize: 12.5 }}
+        />
+        <div className="row tiny muted" style={{ marginTop: 4 }}>
+          <span>{text.trim() ? `${text.trim().length.toLocaleString()} chars` : 'empty'}</span>
+          {dirty(p.id, f) && <span style={{ color: 'var(--accent)' }}>unsaved</span>}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="spread" style={{ marginBottom: 6 }}>
-          <h2 style={{ margin: 0 }}>Compare transcripts</h2>
+        <div className="spread" style={{ marginBottom: 2 }}>
+          <h2 style={{ margin: 0 }}>Compare</h2>
           <div className="row" style={{ gap: 6 }}>
-            {anyResult && (
+            {tab === 'result' && anyResult && (
               <button className="small" onClick={copyAll}>
                 {copied ? 'Copied' : 'Copy all results'}
               </button>
@@ -570,19 +662,19 @@ export function CompareModal({
           </div>
         </div>
 
-        <p className="sub">
-          Checked against this room&apos;s script ({referenceLineCount} lines). Error rates, proper
-          nouns, numbers and speaker attribution are measured by edit distance. Only two questions
-          go to {judges.map((j) => j.label).join(' and ')}: whether the missing content matters, and
-          whether any meaning was reversed.
-        </p>
-
-        {!isHost && (
-          <p className="tiny muted" style={{ margin: '0 0 10px' }}>
-            You can view results here. Only the host can paste transcripts, edit the glossary, or
-            run scoring.
-          </p>
-        )}
+        <div className="tabs">
+          <button
+            className={tab === 'input' ? 'active' : ''}
+            disabled={!canEdit}
+            title={canEdit ? undefined : 'Only the host or a capture device can paste'}
+            onClick={() => setTab('input')}
+          >
+            Input
+          </button>
+          <button className={tab === 'result' ? 'active' : ''} onClick={() => setTab('result')}>
+            Result
+          </button>
+        </div>
 
         {keyProblem && (
           <p className="tiny" style={{ color: 'var(--err)' }}>
@@ -597,203 +689,205 @@ export function CompareModal({
           </p>
         )}
 
-        <div className="card" style={{ background: 'var(--panel-2)' }}>
-          <label className="field">
-            <span className="spread">
-              <span>Glossary — names, products, jargon (one per line)</span>
-              <span className="muted">{termCount || 'none'}</span>
-            </span>
-            <textarea
-              rows={3}
-              value={terms}
-              readOnly={!isHost}
-              placeholder={'Priya Raghavan\nAcme Robotics\nQuicksilver'}
-              onFocus={() => {
-                focused.current = true;
-              }}
-              onBlur={() => {
-                focused.current = false;
-                if (isHost && terms !== glossary) onGlossary(terms);
-              }}
-              onChange={(e) => {
-                if (isHost) setTerms(e.target.value);
-              }}
-              style={{ fontSize: 12.5 }}
-            />
-          </label>
-          <p className="sub" style={{ margin: '8px 0 0' }}>
-            These count triple, and each one is checked individually so you can see what it came out
-            as. Speaker names from the script and anything containing a digit are included
-            automatically. Latin proper nouns are picked up from capitalisation — Chinese and
-            Japanese have none, so for those this list is the only way.
-            {!isHost && ' Only the host can edit this list.'}
-          </p>
-        </div>
-
-        {ranked.length > 1 && (
-          <div className="card" style={{ background: 'var(--panel-2)' }}>
-            <h2 style={{ margin: '0 0 4px' }}>Ranking</h2>
-            <p className="sub" style={{ marginTop: 0 }}>
-              Same four metrics side by side. No composite score — one number would hide which kind
-              of mistake each product actually makes. Full detail (proper nouns, per-speaker
-              mapping, evidence) is in each product&apos;s card below.
+        {tab === 'input' ? (
+          <>
+            <p className="sub">
+              Paste (or upload) what each product produced — its transcript and its summary. Saving
+              a transcript clears its old score; hit Re-score to grade it against this room&apos;s
+              script ({referenceLineCount} lines).
             </p>
-            <table className="scores rank">
-              <thead>
-                <tr>
-                  <th />
-                  <th>Plain WER</th>
-                  <th>Weighted WER</th>
-                  <th>UER</th>
-                  <th>DER</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ranked.map((r) => {
-                  const m = r.res.metrics;
-                  const der = derOf(m.speakers);
-                  return (
-                    <tr key={r.p.id}>
-                      <td className="dim">{r.p.label}</td>
-                      <td style={{ color: errColor(m.wer.wer) }}>{pct(m.wer.wer)}</td>
-                      <td style={{ color: errColor(m.weighted?.wer), fontWeight: 700 }}>
-                        {pct(m.weighted?.wer)}
-                      </td>
-                      <td style={{ color: errColor(r.res.uer?.uer) }}>
-                        {r.res.uer?.unavailable ? '—' : pct(r.res.uer?.uer)}
-                      </td>
-                      <td style={{ color: der.color }}>{der.text}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
 
-        {products.map((p) => {
-          const c = byProduct.get(p.id);
-          const scoring = c?.state === 'scoring';
-          const text = textOf(p.id);
-          return (
-            <div key={p.id} className="card" style={{ background: 'var(--panel-2)' }}>
-              <div className="spread">
-                <h2 style={{ margin: 0 }}>{p.label}</h2>
-                {isHost && (
-                  <div className="row" style={{ gap: 6 }}>
-                    <button className="small ghost" onClick={() => fileRefs.current[p.id]?.click()}>
-                      Choose file
-                    </button>
-                    <input
-                      ref={(el) => {
-                        fileRefs.current[p.id] = el;
-                      }}
-                      type="file"
-                      accept=".txt,.md,.vtt,.srt,.json,text/plain"
-                      style={{ display: 'none' }}
-                      onChange={(e) => {
-                        const f = e.target.files?.[0];
-                        if (f) void loadFile(p.id, f);
-                        e.target.value = '';
-                      }}
-                    />
-                    {dirty(p.id) && (
-                      <button
-                        className="small primary"
-                        onClick={() => {
-                          onPut(p.id, text);
-                          setDrafts(({ [p.id]: _drop, ...rest }) => rest);
-                        }}
-                      >
-                        Save
-                      </button>
-                    )}
-                    <button
-                      className="small primary"
-                      disabled={scoring || !text.trim() || dirty(p.id) || referenceLineCount === 0}
-                      onClick={() => onScore(p.id)}
-                    >
-                      {scoring ? 'Scoring…' : c?.result ? 'Re-score' : 'Score'}
-                    </button>
+            {products.map((p) => {
+              const c = byProduct.get(p.id);
+              const scoring = c?.state === 'scoring';
+              const transcript = textOf(p.id, 'transcript');
+              return (
+                <div key={p.id} className="card" style={{ background: 'var(--panel-2)' }}>
+                  <div className="spread">
+                    <h2 style={{ margin: 0 }}>{p.label}</h2>
+                    <div className="row" style={{ gap: 6 }}>
+                      {c?.result && !scoring && <span className="pill ok">scored</span>}
+                      {canEdit && (
+                        <button
+                          className="small primary"
+                          disabled={scoring || !transcript.trim() || referenceLineCount === 0}
+                          onClick={() => rescore(p.id)}
+                        >
+                          {scoring ? 'Scoring…' : c?.result ? 'Re-score' : 'Score'}
+                        </button>
+                      )}
+                    </div>
                   </div>
-                )}
-              </div>
+                  <div className="paste-grid">
+                    {field(p, 'transcript')}
+                    {field(p, 'summary')}
+                  </div>
+                  {c?.state === 'failed' && (
+                    <p className="tiny" style={{ color: 'var(--err)', marginBottom: 0 }}>
+                      Scoring failed: {c.error}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
 
-              <textarea
-                rows={5}
-                value={text}
-                readOnly={!isHost}
-                placeholder={isHost ? `Paste what ${p.label} transcribed…` : 'No transcript pasted yet'}
-                onChange={(e) => {
-                  if (isHost) setDrafts((d) => ({ ...d, [p.id]: e.target.value }));
-                }}
-                onDrop={
-                  isHost
-                    ? (e) => {
-                        const f = e.dataTransfer.files?.[0];
-                        if (f) {
-                          e.preventDefault();
-                          void loadFile(p.id, f);
-                        }
-                      }
-                    : undefined
-                }
-                style={{ marginTop: 10, fontSize: 12.5 }}
-              />
-              <div className="row tiny muted" style={{ marginTop: 6 }}>
-                <span>{text.trim() ? `${text.trim().length.toLocaleString()} chars` : 'empty'}</span>
-                {dirty(p.id) && <span style={{ color: 'var(--accent)' }}>unsaved</span>}
-              </div>
+            <div className="card" style={{ background: 'var(--panel-2)' }}>
+              <label className="field">
+                <span className="spread">
+                  <span>Glossary — names, products, jargon (one per line)</span>
+                  <span className="muted">{termCount || 'none'}</span>
+                </span>
+                <textarea
+                  rows={3}
+                  value={terms}
+                  readOnly={!canEdit}
+                  placeholder={'Priya Raghavan\nAcme Robotics\nQuicksilver'}
+                  onFocus={() => {
+                    focused.current = true;
+                  }}
+                  onBlur={() => {
+                    focused.current = false;
+                    if (canEdit && terms !== glossary) onGlossary(terms);
+                  }}
+                  onChange={(e) => {
+                    if (canEdit) setTerms(e.target.value);
+                  }}
+                  style={{ fontSize: 12.5 }}
+                />
+              </label>
+              <p className="sub" style={{ margin: '8px 0 0' }}>
+                These count triple when scoring transcripts, and each one is checked individually.
+                Speaker names from the script and anything containing a digit are included
+                automatically. Chinese and Japanese have no capitalisation, so for those this list
+                is the only way to mark proper nouns.
+              </p>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="sub">
+              Transcripts are checked against this room&apos;s script ({referenceLineCount} lines).
+              Error rates, proper nouns, numbers and speaker attribution are measured by edit
+              distance; whether missing content matters and whether meaning was reversed go to{' '}
+              {judges.map((j) => j.label).join(' and ')}.
+            </p>
 
-              {c?.state === 'failed' && (
-                <p className="tiny" style={{ color: 'var(--err)', marginBottom: 0 }}>
-                  Scoring failed: {c.error}
+            {!canEdit && (
+              <p className="tiny muted" style={{ margin: '0 0 10px' }}>
+                Only the host or a capture device can paste transcripts or run scoring.
+              </p>
+            )}
+
+            {ranked.length > 1 && (
+              <div className="card" style={{ background: 'var(--panel-2)' }}>
+                <h2 style={{ margin: '0 0 4px' }}>Ranking</h2>
+                <p className="sub" style={{ marginTop: 0 }}>
+                  Same four metrics side by side. No composite score — one number would hide which
+                  kind of mistake each product actually makes.
                 </p>
-              )}
+                <table className="scores rank">
+                  <thead>
+                    <tr>
+                      <th />
+                      <th>Plain WER</th>
+                      <th>Weighted WER</th>
+                      <th>UER</th>
+                      <th>DER</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ranked.map((r) => {
+                      const m = r.res.metrics;
+                      const der = derOf(m.speakers);
+                      return (
+                        <tr key={r.p.id}>
+                          <td className="dim">{r.p.label}</td>
+                          <td style={{ color: errColor(m.wer.wer) }}>{pct(m.wer.wer)}</td>
+                          <td style={{ color: errColor(m.weighted?.wer), fontWeight: 700 }}>
+                            {pct(m.weighted?.wer)}
+                          </td>
+                          <td style={{ color: errColor(r.res.uer?.uer) }}>
+                            {r.res.uer?.unavailable ? '—' : pct(r.res.uer?.uer)}
+                          </td>
+                          <td style={{ color: der.color }}>{der.text}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
-              {c?.result && (
-                <div style={{ marginTop: 12 }}>
-                  <Measured m={c.result.metrics} />
+            {products.map((p) => {
+              const c = byProduct.get(p.id);
+              return (
+                <div key={p.id} className="card" style={{ background: 'var(--panel-2)' }}>
+                  <h2 style={{ margin: 0 }}>{p.label}</h2>
 
-                  <Terms
-                    r={c.result.metrics.properNouns}
-                    title="Proper nouns"
-                    empty="Every name came through correctly."
-                  />
-                  <Terms
-                    r={c.result.metrics.numbers}
-                    title="Numbers"
-                    empty="Every number came through correctly."
-                  />
-                  <Speakers s={c.result.metrics.speakers} />
-                  <Uer u={c.result.uer} />
-
-                  {questions.map((q) => (
-                    <Evidence
-                      key={q.key}
-                      label={q.label}
-                      items={c.result!.evidence?.[q.key] ?? []}
-                    />
-                  ))}
-
-                  {c.result.judges.map((j) =>
-                    j.summary ? (
-                      <p key={j.judge} className="tiny" style={{ marginBottom: 6 }}>
-                        <strong>{j.label}:</strong> {j.summary}
-                      </p>
-                    ) : null
+                  <h3 className="tiny" style={{ margin: '12px 0 4px' }}>
+                    Transcript evaluation
+                  </h3>
+                  {c?.state === 'scoring' ? (
+                    <p className="tiny muted" style={{ margin: 0 }}>
+                      Scoring…
+                    </p>
+                  ) : c?.state === 'failed' ? (
+                    <p className="tiny" style={{ color: 'var(--err)', margin: 0 }}>
+                      Scoring failed: {c.error}
+                    </p>
+                  ) : !c?.result ? (
+                    <p className="tiny muted" style={{ margin: 0 }}>
+                      {c?.transcript?.trim()
+                        ? 'Transcript pasted, not scored yet — Re-score it on the Input tab.'
+                        : 'No transcript pasted yet.'}
+                    </p>
+                  ) : (
+                    <div>
+                      <Measured m={c.result.metrics} />
+                      <Terms
+                        r={c.result.metrics.properNouns}
+                        title="Proper nouns"
+                        empty="Every name came through correctly."
+                      />
+                      <Terms
+                        r={c.result.metrics.numbers}
+                        title="Numbers"
+                        empty="Every number came through correctly."
+                      />
+                      <Speakers s={c.result.metrics.speakers} />
+                      <Uer u={c.result.uer} />
+                      {questions.map((q) => (
+                        <Evidence key={q.key} label={q.label} items={c.result!.evidence?.[q.key] ?? []} />
+                      ))}
+                      {c.result.judges.map((j) =>
+                        j.summary ? (
+                          <p key={j.judge} className="tiny" style={{ marginBottom: 6 }}>
+                            <strong>{j.label}:</strong> {j.summary}
+                          </p>
+                        ) : null
+                      )}
+                      {(c.result.failures ?? []).map((f) => (
+                        <p key={f.label} className="tiny" style={{ color: 'var(--err)', margin: 0 }}>
+                          {f.label} failed: {f.message}
+                        </p>
+                      ))}
+                    </div>
                   )}
 
-                  {(c.result.failures ?? []).map((f) => (
-                    <p key={f.label} className="tiny" style={{ color: 'var(--err)', margin: 0 }}>
-                      {f.label} failed: {f.message}
-                    </p>
-                  ))}
+                  {/* 摘要的评估逻辑后面补；先把位置留出来，并说清楚有没有贴 */}
+                  <h3 className="tiny" style={{ margin: '14px 0 4px' }}>
+                    Summary evaluation
+                  </h3>
+                  <p className="tiny muted" style={{ margin: 0 }}>
+                    {c?.summary?.trim()
+                      ? `Summary pasted (${c.summary.trim().length.toLocaleString()} chars). Evaluation is not available yet.`
+                      : 'No summary pasted yet. Evaluation is not available yet.'}
+                  </p>
                 </div>
-              )}
-            </div>
-          );
-        })}
+              );
+            })}
+          </>
+        )}
       </div>
     </div>
   );

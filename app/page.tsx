@@ -6,6 +6,7 @@ import { api } from '@/lib/api';
 import { getDeviceName, rememberRoom, setDeviceName, setHostToken } from '@/lib/identity';
 import { clampTitle, titleWeight, TITLE_MAX_WEIGHT } from '@/lib/roomName';
 import { RoomList } from '@/components/RoomList';
+import { BatchImport } from '@/components/BatchImport';
 
 export default function Home() {
   const router = useRouter();
@@ -113,6 +114,8 @@ export default function Home() {
           {busy === 'create' ? 'Creating…' : 'Create room'}
         </button>
       </div>
+
+      <BatchImport onImported={() => setListKey((k) => k + 1)} />
 
       <div className="card">
         <h2>Join a room</h2>

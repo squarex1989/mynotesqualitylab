@@ -12,7 +12,16 @@ interface Props {
   onAutoAssign: () => void;
   onRename: (name: string) => void;
   onSetAmbienceDevice: (deviceId: string | null) => void;
+  onSetCapture: (deviceId: string, on: boolean) => void;
 }
+
+/*
+ * 设备的三种角色：
+ *   朗读设备   —— 默认，按角色数分到台词
+ *   环境音设备 —— 放 YouTube 环境音，可以同时念台词（自动分配时尽量不让它兼职）
+ *   收音设备   —— 跑 My Notes / Granola / Otter 录音的那台，绝不念台词；
+ *                 它会直接看到 Compare 弹窗，等着贴转录和摘要
+ */
 
 export function DevicePanel({
   devices,
@@ -23,6 +32,7 @@ export function DevicePanel({
   onAutoAssign,
   onRename,
   onSetAmbienceDevice,
+  onSetCapture,
 }: Props) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -55,6 +65,11 @@ export function DevicePanel({
                   <strong>{d.name}</strong>
                   {d.id === myDeviceId && <span className="pill on">this device</span>}
                   {d.isHost && <span className="pill">host</span>}
+                  {d.capture ? (
+                    <span className="pill on">capture</span>
+                  ) : (
+                    <span className="pill">reader</span>
+                  )}
                   {isAmbience && <span className="pill on">ambience</span>}
                 </div>
                 <span className={`pill ${d.audioReady ? 'ok' : 'err'}`}>
@@ -63,7 +78,9 @@ export function DevicePanel({
               </div>
 
               <div className="row tiny muted" style={{ marginTop: 8, gap: 6 }}>
-                {mine.length ? (
+                {d.capture ? (
+                  <span>records the meeting — never reads a line</span>
+                ) : mine.length ? (
                   mine.map((s) => (
                     <span key={s.name} className="pill">
                       {s.name} · {s.lineCount} lines
@@ -112,6 +129,12 @@ export function DevicePanel({
                       Rename
                     </button>
                   ))}
+
+                {isHost && (
+                  <button className="small ghost" onClick={() => onSetCapture(d.id, !d.capture)}>
+                    {d.capture ? 'Make it a reader' : 'Use as capture device'}
+                  </button>
+                )}
 
                 {isHost && settings.noiseMode === 'noisy' && (
                   <button

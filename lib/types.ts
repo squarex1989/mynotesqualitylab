@@ -219,6 +219,8 @@ export interface CompareResult {
 export interface Comparison {
   product: string;
   transcript: string;
+  /** The product's meeting summary. Evaluation for it is not built yet. */
+  summary: string;
   result: CompareResult | null;
   state: 'idle' | 'scoring' | 'done' | 'failed';
   error: string | null;
@@ -256,6 +258,8 @@ export interface Device {
   id: string;
   name: string;
   isHost: boolean;
+  /** Capture device: records the meeting for the products, never reads a line */
+  capture: boolean;
   online: boolean;
   audioReady?: boolean;
 }
@@ -343,4 +347,20 @@ export interface ParsePreview {
   lineCount: number;
   preview: { speaker: string; content: string }[];
   charCount: number;
+}
+
+/** One file's outcome from the batch import on the home page */
+export interface ImportResult {
+  file: string;
+  ok: boolean;
+  error?: string;
+  id?: string;
+  hostToken?: string;
+  title?: string | null;
+  language?: string;
+  speakerCount?: number;
+  lineCount?: number;
+  settings?: { orderMode: string; noiseMode: string; ambienceKind: string };
+  accents?: string[];
+  warnings?: string[];
 }

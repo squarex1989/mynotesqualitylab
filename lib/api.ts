@@ -1,4 +1,4 @@
-import type { Meta, ParsePreview, RoomState, Progress, Line, RoomSummary } from './types';
+import type { Meta, ParsePreview, RoomState, Progress, Line, RoomSummary, ImportResult } from './types';
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
@@ -21,6 +21,13 @@ export const api = {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ title }),
+    }),
+
+  importRooms: (files: { name: string; text: string }[]) =>
+    req<{ results: ImportResult[] }>('/api/rooms/import', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ files }),
     }),
 
   roomSummaries: (ids: string[]) =>

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { parseYouTubeId } from '@/lib/ambience';
+import { parseYouTubeId, AMBIENCE_DEFAULT_START_S } from '@/lib/ambience';
 import type { Device, Meta, RoomSettings } from '@/lib/types';
 
 interface Props {
@@ -185,7 +185,8 @@ export function ToneSettings({ settings, devices, meta, isHost, onChange }: Prop
               {parsed && (
                 <p className="tiny muted" style={{ margin: 0 }}>
                   Video ID <code>{parsed.id}</code>
-                  {parsed.start ? ` · starts at ${parsed.start}s` : ''} · loops
+                  {` · starts at ${parsed.start || AMBIENCE_DEFAULT_START_S}s`} · loops · readers
+                  start once it is audible
                   {savedUrl !== url ? ' · unsaved' : ''}
                 </p>
               )}
@@ -219,8 +220,8 @@ export function ToneSettings({ settings, devices, meta, isHost, onChange }: Prop
                 </select>
               </label>
               <p className="tiny muted" style={{ margin: 0 }}>
-                Once picked, that device&apos;s speakers move to other machines — it just plays the
-                room.
+                It can still read lines, but automatic assignment prefers other machines. When the
+                room starts, readers wait until this device reports the ambience is audible.
               </p>
             </div>
           )}
