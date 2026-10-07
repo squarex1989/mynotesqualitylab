@@ -9,62 +9,34 @@
 //
 // 于是 instructions 恒为空字符串，tts.js 那边就不会往正文前面拼任何东西。
 
-import fs from 'node:fs';
-import path from 'node:path';
-import { DATA_DIR } from './db.js';
+import { VOICE_LIBRARY } from './voice-library.js';
 
-const VOICES_FILE = path.join(DATA_DIR, 'voices.fish.json');
+// 音色库按国家（语种）分组，见 voice-library.js。展平成一张表，
+// 每条带上所属国家，前端先选国家、再从该国家的音色里选。
+const ALL_VOICES = VOICE_LIBRARY.flatMap((c) =>
+  c.voices.map((v) => ({
+    id: v.id,
+    label: v.label,
+    gender: 'neutral',
+    note: v.note || '',
+    country: c.code,
+    languages: [c.code],
+  }))
+);
 
-// Fish 没有官方的具名音色表 —— voice 是 fish.audio 音色库里的 32 位十六进制
-// reference_id。想要一份带描述和标签的表，跑一次：
-//     node scripts/voices-from-ids.mjs <你挑好的 id 们>
-// 下面这几个只是兜底，让项目在还没拉音色表时也能跑起来。
-const FALLBACK_VOICES = [
-  { id: '', label: 'Default voice', gender: 'neutral', note: "No reference_id — the model's own voice" },
-  { id: '9a9cf47702da476aa4629e2506d4a857', label: 'Energetic Male', gender: 'male', note: 'Fish quickstart sample' },
-  { id: 'ca3007f96ae7499ab87d27ea3599956a', label: 'E-Girl', gender: 'female', note: 'Fish quickstart sample' },
-  { id: 'b347db033a6549378b48d00acb0d06cd', label: 'Demo A', gender: 'neutral', note: 'From public docs' },
-  { id: '933563129e564b19a115bedd57b7406a', label: 'Demo B', gender: 'neutral', note: 'From fish.audio docs' },
-  { id: '7f92f8afb8ec43bf81429cc1c9199cb1', label: 'Demo C', gender: 'neutral', note: 'From a community tutorial' },
-];
+const COUNTRIES = VOICE_LIBRARY.map((c) => ({
+  code: c.code,
+  label: c.label,
+  labelZh: c.labelZh,
+  count: c.voices.length,
+}));
 
-let cache = null;
-let cacheMtime = 0;
-
-/** 当前可用音色表。文件改了会自动重新读，不用重启。 */
 export function voices() {
-  try {
-    const stat = fs.statSync(VOICES_FILE);
-    if (cache && stat.mtimeMs === cacheMtime) return cache;
-
-    const parsed = JSON.parse(fs.readFileSync(VOICES_FILE, 'utf8'));
-    const clean = (Array.isArray(parsed) ? parsed : parsed.voices || [])
-      .filter((v) => v && typeof v.id === 'string' && v.label)
-      .map((v) => ({
-        id: v.id.trim(),
-        label: String(v.label),
-        gender: ['male', 'female', 'neutral'].includes(v.gender) ? v.gender : 'neutral',
-        note: String(v.note || ''),
-        tags: Array.isArray(v.tags) ? v.tags : [],
-        languages: Array.isArray(v.languages) ? v.languages : [],
-      }));
-
-    if (clean.length) {
-      cache = clean;
-      cacheMtime = stat.mtimeMs;
-      return cache;
-    }
-    console.warn(`[voices] ${VOICES_FILE} 里没有有效音色，用内置兜底表`);
-  } catch (err) {
-    if (err.code !== 'ENOENT') {
-      console.warn(`[voices] 读取 ${VOICES_FILE} 失败：${err.message}，用内置兜底表`);
-    }
-  }
-  return FALLBACK_VOICES;
+  return ALL_VOICES;
 }
 
-export function usingFallbackVoices() {
-  return !fs.existsSync(VOICES_FILE);
+export function countries() {
+  return COUNTRIES;
 }
 
 // 只剩语速这一个维度。speed 是 Fish 的真参数（prosody.speed，范围 0.5–2.0），

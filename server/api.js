@@ -2,7 +2,7 @@ import express from 'express';
 import fs from 'node:fs';
 import { audioPath } from './db.js';
 import { parseTranscript } from './parse.js';
-import { voices, usingFallbackVoices, DIMENSIONS } from './voices.js';
+import { voices, countries, DIMENSIONS } from './voices.js';
 import {
   createRoom,
   getRoom,
@@ -56,7 +56,7 @@ export function createApiRouter({ broadcast }) {
       dimensions: DIMENSIONS,
       models: TTS_MODELS,
       defaultModel: DEFAULT_TTS_MODEL,
-      fallbackVoices: usingFallbackVoices(),
+      countries: countries(),
       titleMaxWeight: TITLE_MAX_WEIGHT,
       ttsConfigured: !problem,
       ttsProblem: problem,

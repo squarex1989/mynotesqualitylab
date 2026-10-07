@@ -60,13 +60,6 @@ export function SpeakerList({
           </button>
         )}
       </div>
-      {meta?.fallbackVoices && (
-        <p className="sub" style={{ color: 'var(--accent)' }}>
-          ⚠ Using the built-in fallback voice list (just a few samples). Run{' '}
-          <code>scripts/voices-from-ids.mjs</code> or <code>scripts/fetch-fish-voices.mjs</code> to
-          pull a real catalogue from fish.audio.
-        </p>
-      )}
 
       {speakers.map((s) => (
         <SpeakerCard
@@ -110,6 +103,12 @@ function SpeakerCard({
   const dimKeys = meta ? (Object.keys(meta.dimensions) as DimensionKey[]) : [];
   const assigned = devices.find((d) => d.id === speaker.deviceId);
   const voiceInfo = meta?.voices.find((v) => v.id === speaker.voice);
+  const country = voiceInfo?.country ?? meta?.countries[0]?.code;
+  const countryVoices = meta?.voices.filter((v) => v.country === country) ?? [];
+  const pickCountry = (code: string) => {
+    const first = meta?.voices.find((v) => v.country === code);
+    if (first) onUpdate(speaker.name, { voice: first.id });
+  };
 
   return (
     <div className={`speaker${speaking ? ' speaking' : ''}`}>
@@ -135,8 +134,8 @@ function SpeakerCard({
 
       <div className="row tiny muted" style={{ marginTop: 6, gap: 6 }}>
         <span className="pill">{voiceInfo?.label ?? speaker.voice}</span>
-        {voiceInfo?.languages?.length ? (
-          <span className="pill">{voiceInfo.languages.join('/')}</span>
+        {country ? (
+          <span className="pill">{meta?.countries.find((c) => c.code === country)?.label}</span>
         ) : null}
         <span className="pill">{speaker.configLabels.pace}</span>
         {speaker.volume !== 100 && (
@@ -151,16 +150,25 @@ function SpeakerCard({
         <>
           <div className="dims">
             <label className="field">
+              Country
+              <select value={country ?? ''} onChange={(e) => pickCountry(e.target.value)}>
+                {meta?.countries.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.label} · {c.labelZh}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="field">
               Voice
               <select
                 value={speaker.voice}
                 onChange={(e) => onUpdate(speaker.name, { voice: e.target.value })}
               >
-                {meta?.voices.map((v) => (
+                {countryVoices.map((v) => (
                   <option key={v.id} value={v.id}>
-                    {[v.label, v.languages?.length ? v.languages.join('/') : '', v.note]
-                      .filter(Boolean)
-                      .join(' · ')}
+                    {[v.label, v.note].filter(Boolean).join(' · ')}
                   </option>
                 ))}
               </select>

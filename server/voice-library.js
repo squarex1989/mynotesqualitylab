@@ -1,0 +1,143 @@
+// 音色库：先选国家（语种），再在该国家下选音色。
+//
+// 这是唯一的音色来源 —— 不再读 $DATA_DIR/voices.fish.json，也没有兜底表。
+// id 是 fish.audio 音色库里的 32 位十六进制 reference_id。
+// note 只在已知口音时填写（英文那组）；其余音色只按序号命名。
+// 想增删音色直接改这个文件，保持每个 id 全局唯一。
+
+export const VOICE_LIBRARY = [
+  {
+    code: 'en',
+    label: 'English',
+    labelZh: 'English',
+    voices: [
+      { id: 'b44a47b4e9d544a3a4d7c2f5028c43bf', label: 'English 1', note: 'Indian accent' },
+      { id: '6611aa6363d845eab454c442ee75f5af', label: 'English 2' },
+      { id: 'b58f292802824b6aa43ad25aa0b466a8', label: 'English 3' },
+      { id: '77974fed34614080a505a797bb96357b', label: 'English 4' },
+      { id: '0aaa81da096d4cfdbd04674de86d893c', label: 'English 5', note: 'Chinese accent' },
+      { id: 'af4929ffe32045d2a3926b75672cefbf', label: 'English 6', note: 'British accent' },
+      { id: '1c6fb1152f794b36b76ce5b3138e6489', label: 'English 7', note: 'West Coast accent' },
+      { id: '6a4fe0e56380433a89e3253b531b10f8', label: 'English 8', note: 'Japanese accent' },
+    ],
+  },
+  {
+    code: 'zh',
+    label: 'Chinese',
+    labelZh: '中文',
+    voices: [
+      { id: '0dad1a78cb8c405da0214a9b408804bb', label: 'Chinese 1' },
+      { id: 'b493b4c72d5443bd8f024fb15095d7ef', label: 'Chinese 2' },
+      { id: 'ba08f02741494edfb0f2ec76ece4090b', label: 'Chinese 3' },
+      { id: '9a5ee67e97dd47d3ad3b99e93c1cdc14', label: 'Chinese 4' },
+      { id: '301270e51a4a4ae0802fba4018047d81', label: 'Chinese 5' },
+      { id: '0e14c1b6a85d4537aa1f48d99ad9817d', label: 'Chinese 6' },
+      { id: 'ac60ac3cb28643ecaa84a7cb57942629', label: 'Chinese 7' },
+      { id: '3baad3a50f124fb79e20005ebd0efd1c', label: 'Chinese 8' },
+    ],
+  },
+  {
+    code: 'fr',
+    label: 'French',
+    labelZh: '法语',
+    voices: [
+      { id: 'a47b7c53c4634f59ba947fb2665f81a9', label: 'French 1' },
+      { id: 'fe1136ae6a54462e9723b3cdc1016acb', label: 'French 2' },
+      { id: '690813f2df56491b82ee02a22d1c67fd', label: 'French 3' },
+      { id: '5567200c7d8341738f0892bbacd3be3c', label: 'French 4' },
+      { id: '6d3a8a05a287483ab32da9891d7f7fc9', label: 'French 5' },
+      { id: 'a288bdc744da4ad194921adad6863175', label: 'French 6' },
+      { id: 'da31468f7d0248838545b75fdfe6ffd1', label: 'French 7' },
+      { id: '847a2e179cde4d80b666f3090df0c488', label: 'French 8' },
+    ],
+  },
+  {
+    code: 'de',
+    label: 'German',
+    labelZh: '德语',
+    voices: [
+      { id: '71c095ed4c03459fb98500db63b88fbe', label: 'German 1' },
+      { id: 'c3e2da99e75949adb230b05889b172b1', label: 'German 2' },
+      { id: '90042f762dbf49baa2e7776d011eee6b', label: 'German 3' },
+      { id: 'e891954162584409bce5cf43aebd1726', label: 'German 4' },
+      { id: '88b18e0d81474a0ca08e2ea6f9df5ff4', label: 'German 5' },
+      { id: 'c5b66a80d90749fc914c714e793d1a2f', label: 'German 6' },
+      { id: '06e43704c489420cab97d20ea1d289a3', label: 'German 7' },
+    ],
+  },
+  {
+    code: 'ja',
+    label: 'Japanese',
+    labelZh: '日语',
+    voices: [
+      { id: '5161d41404314212af1254556477c17d', label: 'Japanese 1' },
+      { id: '92c556e1a13e4ac7add3d1a8665c3cb8', label: 'Japanese 2' },
+      { id: '34d29f836f4a4da9a1d13619dc35574a', label: 'Japanese 3' },
+      { id: '030fda5bec284b038ad930effd150f94', label: 'Japanese 4' },
+      { id: 'e9d4ad05ac7a4baf8f979e4c389bf11d', label: 'Japanese 5' },
+      { id: '65989d2ff53a49f6bf0b953f87399af6', label: 'Japanese 6' },
+      { id: 'b328f092d1f746b99148c203caac6ce9', label: 'Japanese 7' },
+      { id: 'f59b9bff8c37434aafed363ca72d14dc', label: 'Japanese 8' },
+    ],
+  },
+  {
+    code: 'pt',
+    label: 'Portuguese',
+    labelZh: '葡萄牙语',
+    voices: [
+      { id: '7d10631996b34312823758ed8fc41681', label: 'Portuguese 1' },
+      { id: '23bcd75164c648ac959604daadfc022b', label: 'Portuguese 2' },
+      { id: '23582b7e1db44054bb522f19c9def4c8', label: 'Portuguese 3' },
+      { id: 'f10700a1a6fb400880df70b9d176ccb2', label: 'Portuguese 4' },
+      { id: '5404901971da4cdca1a67bd8e9a9055f', label: 'Portuguese 5' },
+      { id: 'f1828be24b8049d58f2e74f79104932b', label: 'Portuguese 6' },
+      { id: '3a2d771e0b4d4d928a41b356e3651d2f', label: 'Portuguese 7' },
+      { id: 'cefab6def3a44d19a2fcafd4f50038ac', label: 'Portuguese 8' },
+    ],
+  },
+  {
+    code: 'es',
+    label: 'Spanish',
+    labelZh: '西班牙语',
+    voices: [
+      { id: '95f7b8fe6a264953bad59931c6f8c571', label: 'Spanish 1' },
+      { id: '8ab964fc63cd49a498f862333cb5b18f', label: 'Spanish 2' },
+      { id: 'eaadef28d69a4a10b80436d28634115c', label: 'Spanish 3' },
+      { id: 'b4b9921b320549d484ac1d67523a4bd0', label: 'Spanish 4' },
+      { id: 'cd338b19a3234c6b9c92ce604a07b89d', label: 'Spanish 5' },
+      { id: 'f84401cc3903400fb93f07ff4e35424d', label: 'Spanish 6' },
+      { id: '21349a3a52eb4213b93d5497f9088caa', label: 'Spanish 7' },
+      { id: '3fed8b0fb3204a13b7e5d804ed060cbd', label: 'Spanish 8' },
+    ],
+  },
+  {
+    code: 'it',
+    label: 'Italian',
+    labelZh: '意大利语',
+    voices: [
+      { id: 'd9b7d9631b1e46bf845ed07a95b74456', label: 'Italian 1' },
+      { id: '50be4cf9396c473495bd4491ecff98fd', label: 'Italian 2' },
+      { id: '719d11a7f09247329e6d5fc7f2a95621', label: 'Italian 3' },
+      { id: '39b752f5505948f8b9be9633b3fb29b5', label: 'Italian 4' },
+      { id: 'd9e40ea3b53f45ca9f8d2af17e2b13e4', label: 'Italian 5' },
+      { id: 'adb08e3f0ecc4736a79ea3ae28e92a20', label: 'Italian 6' },
+      { id: '05c554451a234b81946023ee44fb956e', label: 'Italian 7' },
+      { id: '0c4309ba94824d51965ed92fa847e058', label: 'Italian 8' },
+    ],
+  },
+  {
+    code: 'nl',
+    label: 'Dutch',
+    labelZh: '荷兰语',
+    voices: [
+      { id: '67150a2942834c8699867551c24527e5', label: 'Dutch 1' },
+      { id: 'd28854d911fb4dfe9809c972d4c89a0f', label: 'Dutch 2' },
+      { id: '34e7be0209bb4c848f34338687dd6c20', label: 'Dutch 3' },
+      { id: 'c9da5a5e518f46fe8e3f39a8ba99685e', label: 'Dutch 4' },
+      { id: 'ba60b1f7c41c4d4aa3031963574119b0', label: 'Dutch 5' },
+      { id: '04f0c810ce15414cb475a7cacd3d817c', label: 'Dutch 6' },
+      { id: '8edddd2f3dfc4cb0bf2a74968fbf9a6f', label: 'Dutch 7' },
+      { id: 'fc239dfc7e56496087c2aba4fa1a7853', label: 'Dutch 8' },
+    ],
+  },
+];
