@@ -49,6 +49,13 @@ const DEVICE_PRUNE_INTERVAL_MS = Number(process.env.DEVICE_PRUNE_INTERVAL_MS) ||
 /** roomId -> { items, totalMs, pending:Set, timer, started } */
 const sessions = new Map();
 
+/**
+ * roomId -> 暂停时正在念的那一句的 idx。继续播放就从这一句的开头重新开始 ——
+ * 不从半句话中间接着放：各设备的音频要重新预加载、重新对时，从句首开始最干净，
+ * 听的人也更容易接上。只存内存，重启即忘（重启后房间本来就是 idle）。
+ */
+const pausedAt = new Map();
+
 /** `${roomId}:${deviceId}` -> 这台设备有没有解锁过 AudioContext（只存内存，重启即忘） */
 const audioReady = new Map();
 
@@ -73,6 +80,7 @@ function snapshot(roomId) {
     audioReady: audioReady.get(`${roomId}:${d.id}`) === true,
   }));
   state.comparisons = getComparisons(roomId);
+  state.pausedIdx = pausedAt.has(roomId) ? pausedAt.get(roomId) : null;
   return { state, progress: jobStatus(roomId) };
 }
 
@@ -362,9 +370,15 @@ export function attachRealtime(httpServer) {
     );
 
     // ---------------- 播放 ----------------
+    // fromIdx：从某一句开始（Script 里每行前面的播放按钮、暂停后的继续）
     socket.on(
       'room:start',
-      hostOnly(() => startRoom(io, roomId, socket))
+      hostOnly((payload) => startRoom(io, roomId, socket, { fromIdx: payload.fromIdx }))
+    );
+
+    socket.on(
+      'room:pause',
+      hostOnly(() => pauseRoom(io, roomId))
     );
 
     socket.on(
@@ -413,7 +427,7 @@ export function attachRealtime(httpServer) {
 
 /* ------------------------------------------------------------------ */
 
-function startRoom(io, roomId, socket) {
+function startRoom(io, roomId, socket, { fromIdx } = {}) {
   const room = getRoom(roomId);
   if (!room) return;
 
@@ -447,18 +461,30 @@ function startRoom(io, roomId, socket) {
   // 没分到设备的角色兜底给房主 —— 除非房主这台是收音设备，收音设备绝不出声
   const hostRow = getDevices(roomId).find((d) => d.id === room.host_device);
   const hostDevice = hostRow && !hostRow.capture ? room.host_device : null;
-  const { items, totalMs, overlaps } = buildSchedule(
-    room,
-    getLines(roomId),
-    speakerMap,
-    audioMap,
-    hostDevice
-  );
+  const built = buildSchedule(room, getLines(roomId), speakerMap, audioMap, hostDevice);
+  let { items, totalMs, overlaps } = built;
+
+  // 从某一句开始：之前的全部丢掉（包括和这一句重叠的上一句），时间线平移到 0
+  if (fromIdx !== undefined && fromIdx !== null) {
+    const at = items.findIndex((i) => i.idx === Number(fromIdx));
+    if (at < 0) {
+      socket.emit('toast', { kind: 'error', message: 'That line is not in the schedule' });
+      return;
+    }
+    const offset = items[at].startMs;
+    items = items.slice(at).map((i) => ({ ...i, startMs: i.startMs - offset }));
+    totalMs = items.reduce((max, it) => Math.max(max, it.startMs + it.durationMs), 0);
+    overlaps = items.filter((i) => i.overlapMs > 0).length;
+  }
 
   if (!items.length) {
     socket.emit('toast', { kind: 'error', message: 'The schedule came out empty' });
     return;
   }
+
+  // 正在放（或在准备）的话先停掉，再从新的位置开始
+  if (sessions.has(roomId)) endSession(io, roomId, 'restart');
+  pausedAt.delete(roomId);
 
   // 参与本次播放的设备 = 有台词的设备 + 环境音设备
   const pending = new Set(items.map((i) => i.deviceId).filter(Boolean));
@@ -549,6 +575,7 @@ function launch(io, roomId) {
   clearTimeout(session.ambienceTimer);
 
   const startAt = Date.now() + GO_LEAD_MS;
+  session.startAt = startAt;
   io.to(roomId).emit('play:go', { token: session.token, startAt, totalMs: session.totalMs });
 
   session.endTimer = setTimeout(() => {
@@ -556,7 +583,8 @@ function launch(io, roomId) {
   }, GO_LEAD_MS + session.totalMs + 1500);
 }
 
-function stopRoom(io, roomId, reason) {
+/** 清掉一场播放的计时器并通知各设备停下，不动房间状态 */
+function endSession(io, roomId, reason) {
   const session = sessions.get(roomId);
   if (session) {
     clearTimeout(session.timer);
@@ -564,7 +592,33 @@ function stopRoom(io, roomId, reason) {
     clearTimeout(session.ambienceTimer);
     sessions.delete(roomId);
   }
-  setRoomStatus(roomId, 'idle');
   io.to(roomId).emit('play:stop', { reason });
+}
+
+/** 暂停：记下此刻正在念的那一句，停掉；继续时从那一句开头开始 */
+function pauseRoom(io, roomId) {
+  const session = sessions.get(roomId);
+  if (!session) return;
+  const elapsed = session.startAt ? Date.now() - session.startAt : -1;
+  let current = session.items[0];
+  for (const it of session.items) {
+    if (it.startMs <= elapsed) current = it;
+    else break;
+  }
+  // 那一句其实已经念完、正在句间停顿里：从下一句继续
+  if (current && elapsed >= current.startMs + current.durationMs) {
+    const next = session.items[session.items.indexOf(current) + 1];
+    if (next) current = next;
+  }
+  if (current) pausedAt.set(roomId, current.idx);
+  endSession(io, roomId, 'paused');
+  setRoomStatus(roomId, 'idle');
+  pushState(io, roomId);
+}
+
+function stopRoom(io, roomId, reason) {
+  endSession(io, roomId, reason);
+  pausedAt.delete(roomId);
+  setRoomStatus(roomId, 'idle');
   pushState(io, roomId);
 }

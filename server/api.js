@@ -102,7 +102,8 @@ export function createApiRouter({ broadcast }) {
   // 首页那个「我创建的房间」列表用的。房间号本身就是凭证，所以不另做鉴权 ——
   // 调用方得先知道 ID 才问得出来。
   router.post('/rooms/summaries', (req, res) => {
-    const ids = Array.isArray(req.body?.ids) ? req.body.ids.slice(0, 200) : [];
+    // 批量导入一次就是 100 个房间，Your rooms 可能有上千个
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.slice(0, 5000) : [];
     res.json({ rooms: roomSummaries(ids) });
   });
 

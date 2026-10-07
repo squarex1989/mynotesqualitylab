@@ -75,11 +75,15 @@ export function forgetRoom(roomId: string) {
   }
 }
 
+export const RECENT_LIMIT = 100;
+
+/** 记一笔「最近进入过」。只在真正进了房间页时调用 */
 export function rememberRoom(roomId: string) {
   if (typeof window === 'undefined') return;
   const raw = localStorage.getItem('readroom:recent');
   const list: string[] = raw ? JSON.parse(raw) : [];
-  const next = [roomId, ...list.filter((r) => r !== roomId)].slice(0, 6);
+  // 首页 Recent 显示最近进入的 100 个
+  const next = [roomId, ...list.filter((r) => r !== roomId)].slice(0, RECENT_LIMIT);
   localStorage.setItem('readroom:recent', JSON.stringify(next));
 }
 

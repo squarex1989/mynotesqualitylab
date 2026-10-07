@@ -394,7 +394,9 @@ export function useRoom(roomId: string, { onGoto }: { onGoto?: (roomId: string) 
         emit('speaker:assign', { name, deviceId: targetDeviceId }),
       autoAssign: () => emit('devices:autoAssign', { force: true }),
       updateSettings: (patch: Partial<RoomSettings>) => emit('room:settings', patch),
-      start: () => emit('room:start'),
+      /** 不给 fromIdx 从头开始；给了就从那一句开始 */
+      start: (fromIdx?: number) => emit('room:start', fromIdx === undefined ? {} : { fromIdx }),
+      pause: () => emit('room:pause'),
       stop: () => emit('room:stop'),
       startGeneration: () => emit('generation:start'),
       putComparison: (product: string, patch: { transcript?: string; summary?: string }) =>
