@@ -55,11 +55,8 @@ export function TranscriptUploader({ roomId }: { roomId: string }) {
   };
 
   const upload = async () => {
-    const token = getHostToken(roomId);
-    if (!token) {
-      setError('This device is not the host of this room');
-      return;
-    }
+    // 没有 host token 也行：登录的建房人靠会话 cookie 就被认作房主
+    const token = getHostToken(roomId) ?? '';
     setUploading(true);
     setError(null);
     try {

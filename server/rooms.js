@@ -64,19 +64,20 @@ function makeRoomId() {
   throw new Error('Could not allocate a room code, please retry');
 }
 
-export function createRoom({ title } = {}) {
+export function createRoom({ title, ownerId = null } = {}) {
   const id = makeRoomId();
   const hostToken = crypto.randomBytes(24).toString('hex');
   db.prepare(
-    `INSERT INTO rooms (id, host_token, created_at, title, ambience_url_cafe, ambience_url_airport)
-     VALUES (?, ?, ?, ?, ?, ?)`
+    `INSERT INTO rooms (id, host_token, created_at, title, ambience_url_cafe, ambience_url_airport, owner_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     hostToken,
     Date.now(),
     normalizeTitle(title),
     AMBIENCE_DEFAULTS.cafe,
-    AMBIENCE_DEFAULTS.airport
+    AMBIENCE_DEFAULTS.airport,
+    ownerId
   );
   return { id, hostToken };
 }
@@ -88,6 +89,36 @@ export function getRoom(id) {
 
 export function isHostToken(room, token) {
   return Boolean(room && token && token === room.host_token);
+}
+
+/** 房主 = 拿着 host token，或者是建这个房间的那个登录账号（换台电脑登录也算） */
+export function isRoomHost(room, { token, userId } = {}) {
+  return isHostToken(room, token) || Boolean(room && userId && room.owner_id === userId);
+}
+
+/** 这个账号名下的全部房间（新的在前），带 host token —— 前端存到本机，原有按 token 的流程照常工作 */
+export function ownedRooms(userId) {
+  const rows = db
+    .prepare('SELECT id, host_token FROM rooms WHERE owner_id = ? ORDER BY created_at DESC')
+    .all(userId);
+  const tokens = new Map(rows.map((r) => [r.id, r.host_token]));
+  return roomSummaries(rows.map((r) => r.id)).map((s) => ({ ...s, hostToken: tokens.get(s.id) }));
+}
+
+/**
+ * 认领：账号体系上线前建的房间没有 owner。登录后把本机存着 host token 的那些认到账号上
+ * （token 对得上、且还没有主人的才认）。返回认领了几个。
+ */
+export function claimRooms(userId, list) {
+  const stmt = db.prepare(
+    'UPDATE rooms SET owner_id = ? WHERE id = ? AND host_token = ? AND owner_id IS NULL'
+  );
+  let n = 0;
+  for (const r of Array.isArray(list) ? list.slice(0, 5000) : []) {
+    if (!r?.id || !r?.hostToken) continue;
+    n += Number(stmt.run(userId, String(r.id).toUpperCase(), String(r.hostToken)).changes);
+  }
+  return n;
 }
 
 export function getLines(roomId) {

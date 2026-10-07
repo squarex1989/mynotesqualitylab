@@ -1,7 +1,7 @@
 import { Server } from 'socket.io';
 import {
   getRoom,
-  isHostToken,
+  isRoomHost,
   roomState,
   getLines,
   getSpeakers,
@@ -30,6 +30,7 @@ import {
   referenceTranscript,
 } from './rooms.js';
 import { gradeTranscript, isProduct } from './judge.js';
+import { userFromCookieHeader } from './auth.js';
 import { ensureGeneration, jobStatus, genEvents } from './generate.js';
 import { buildSchedule } from './schedule.js';
 import { lookupAudio } from './tts.js';
@@ -135,9 +136,11 @@ export function attachRealtime(httpServer) {
     }
 
     const roomId = room.id;
-    const isHost = isHostToken(room, hostToken);
+    // 登录了、且是这个房间的建房人 → 不管本机有没有 host token 都是房主
+    const user = userFromCookieHeader(socket.handshake.headers.cookie);
+    const isHost = isRoomHost(room, { token: hostToken, userId: user?.id });
 
-    socket.data = { roomId, deviceId, isHost };
+    socket.data = { roomId, deviceId, isHost, userId: user?.id ?? null };
     socket.join(roomId);
 
     const liveKey = `${roomId}:${deviceId}`;
@@ -326,7 +329,7 @@ export function attachRealtime(httpServer) {
           reply({ ok: false, error: 'Pick a different, existing room' });
           return;
         }
-        if (!isHostToken(target, payload.targetHostToken)) {
+        if (!isRoomHost(target, { token: payload.targetHostToken, userId: socket.data.userId })) {
           reply({ ok: false, error: 'You are not the host of that room' });
           return;
         }

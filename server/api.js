@@ -3,10 +3,13 @@ import fs from 'node:fs';
 import { audioPath } from './db.js';
 import { parseTranscript } from './parse.js';
 import { voices, countries, DIMENSIONS } from './voices.js';
+import { attachUser, requireLogin } from './auth.js';
 import {
   createRoom,
   getRoom,
-  isHostToken,
+  isRoomHost,
+  ownedRooms,
+  claimRooms,
   setTranscript,
   getLines,
   roomState,
@@ -33,6 +36,7 @@ export function createApiRouter({ broadcast }) {
 
   router.use(express.json({ limit: '12mb' }));
   router.use(express.text({ limit: '12mb', type: 'text/plain' }));
+  router.use(attachUser);
 
   const requireRoom = (req, res, next) => {
     const room = getRoom(req.params.id);
@@ -43,7 +47,7 @@ export function createApiRouter({ broadcast }) {
 
   const requireHost = (req, res, next) => {
     const token = req.get('x-host-token');
-    if (!isHostToken(req.room, token)) {
+    if (!isRoomHost(req.room, { token, userId: req.user?.id })) {
       return res.status(403).json({ error: 'Only the host can do that' });
     }
     next();
@@ -71,14 +75,25 @@ export function createApiRouter({ broadcast }) {
     });
   });
 
-  router.post('/rooms', (req, res) => {
-    const { id, hostToken } = createRoom({ title: req.body?.title });
+  // 建房要登录（游客只能加入别人的房间）
+  router.post('/rooms', requireLogin, (req, res) => {
+    const { id, hostToken } = createRoom({ title: req.body?.title, ownerId: req.user?.id ?? null });
     res.json({ id, hostToken });
+  });
+
+  // 当前账号名下的全部房间，带 host token
+  router.get('/rooms/mine', requireLogin, (req, res) => {
+    res.json({ rooms: req.user ? ownedRooms(req.user.id) : [] });
+  });
+
+  // 把本机存着 host token、还没有主人的老房间认到当前账号上
+  router.post('/rooms/claim', requireLogin, (req, res) => {
+    res.json({ claimed: req.user ? claimRooms(req.user.id, req.body?.rooms) : 0 });
   });
 
   // 批量导入：每个 transcript 文件建一个房间，按文件里的要求配好（不合成音频）。
   // 前端会把最多 100 个文件按体积分批发过来；单个文件失败不影响其它文件。
-  router.post('/rooms/import', (req, res) => {
+  router.post('/rooms/import', requireLogin, (req, res) => {
     const files = Array.isArray(req.body?.files) ? req.body.files : [];
     if (!files.length) return res.status(400).json({ error: 'No files' });
     if (files.length > MAX_IMPORT_FILES) {
@@ -91,7 +106,7 @@ export function createApiRouter({ broadcast }) {
         return { file: name, ok: false, error: 'File is over 4MB' };
       }
       try {
-        return importTranscript({ name, text });
+        return importTranscript({ name, text }, { ownerId: req.user?.id ?? null });
       } catch (err) {
         return { file: name, ok: false, error: err.message || String(err) };
       }
