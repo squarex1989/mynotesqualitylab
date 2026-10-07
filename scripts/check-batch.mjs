@@ -24,6 +24,7 @@ const { planImport, importTranscript, parseFileName } = await import('../server/
 const { voices } = await import('../server/voices.js');
 const { db, audioPath } = await import('../server/db.js');
 const { io: connect } = await import('socket.io-client');
+const { buildSchedule } = await import('../server/schedule.js');
 
 let pass = 0;
 let fail = 0;
@@ -126,6 +127,32 @@ Carol: Three points week over week, or year over year?`,
     threw = true;
   }
   t('解析不出台词的文件报错', threw);
+}
+
+// ---------------------------------------------------------------- 1b
+console.log('\n1b) 话没说完（省略号 / 破折号收尾）时，下一句直接插进来');
+{
+  const room = { order_mode: 'ordered', gap_ms: 450, chaos_period_ms: 20000, duck_gain: 0.5 };
+  const lines = [
+    { idx: 0, speaker: '马强', content: '肝肾功能这块,我们数据这边其实也发现了一个问题,就是...' },
+    { idx: 1, speaker: '李娜', content: '是不是又是那个录入延迟的事?' },
+    { idx: 2, speaker: '马强', content: '对，就是这个。' },
+    { idx: 3, speaker: '李娜', content: '我觉得——' },
+    { idx: 4, speaker: '马强', content: '先别急。' },
+  ];
+  const audio = new Map(lines.map((l) => [l.idx, { hash: `h${l.idx}`, durationMs: 3000 }]));
+  const sp = new Map([['马强', { device_id: 'a', volume: 100 }], ['李娜', { device_id: 'b', volume: 100 }]]);
+  const { items } = buildSchedule(room, lines, sp, audio, null);
+  const end = (i) => items[i].startMs + items[i].durationMs;
+  t('★「就是...」之后，下一句在它念完之前就开口（有序模式也一样）', items[1].startMs < end(0),
+    `${items[1].startMs} vs ${end(0)}`);
+  t('被打断的那句从重叠处压低音量', items[0].duckFromMs !== null);
+  t('正常收尾的句子照常留 gap', items[2].startMs === end(1) + 450, `${items[2].startMs} vs ${end(1)}`);
+  t('「——」收尾也算被打断', items[4].startMs < end(3));
+
+  const same = new Map([['马强', { device_id: 'a', volume: 100 }], ['李娜', { device_id: 'a', volume: 100 }]]);
+  const s2 = buildSchedule(room, lines, same, audio, null).items;
+  t('同一台设备上不重叠，但紧接着开口、不留 gap', s2[1].startMs === s2[0].startMs + s2[0].durationMs);
 }
 
 // ---------------------------------------------------------------- socket 工具

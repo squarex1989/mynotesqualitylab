@@ -145,6 +145,25 @@ export default function RoomPage() {
     }
   };
 
+  // 开场面板在页面上出现两次（右栏顶部 + Script 旁边），两份完全一样
+  const stagePanel = state ? (
+      <StagePanel
+        state={state}
+        progress={progress}
+        isHost={isHost}
+        phase={phase}
+        totalMs={totalMs}
+        elapsedMs={elapsedMs}
+        overlaps={overlaps}
+        prepareRemaining={prepareRemaining}
+        waitingAmbience={waitingAmbience}
+        myDeviceId={deviceId}
+        onStart={actions.start}
+        onStop={actions.stop}
+        onGenerate={actions.startGeneration}
+      />
+  ) : null;
+
   if (fatal) {
     return (
       <div className="shell" style={{ maxWidth: 520, paddingTop: 80 }}>
@@ -342,6 +361,7 @@ export default function RoomPage() {
           </div>
         </div>
       ) : (
+        <>
         <div className="grid">
           <div>
             <SpeakerList
@@ -366,32 +386,10 @@ export default function RoomPage() {
               onSetAmbienceDevice={(id) => actions.updateSettings({ ambienceDevice: id })}
               onSetCapture={actions.setCapture}
             />
-            <ScriptView
-              lines={lines}
-              progress={progress}
-              schedule={schedule}
-              activeIdxs={activeIdxs}
-              currentIdx={currentIdx}
-              playing={phase === 'playing'}
-            />
           </div>
 
           <div>
-            <StagePanel
-              state={state}
-              progress={progress}
-              isHost={isHost}
-              phase={phase}
-              totalMs={totalMs}
-              elapsedMs={elapsedMs}
-              overlaps={overlaps}
-              prepareRemaining={prepareRemaining}
-              waitingAmbience={waitingAmbience}
-              myDeviceId={deviceId}
-              onStart={actions.start}
-              onStop={actions.stop}
-              onGenerate={actions.startGeneration}
-            />
+            {stagePanel}
             <ToneSettings
               settings={state.settings}
               devices={state.devices}
@@ -401,6 +399,22 @@ export default function RoomPage() {
             />
           </div>
         </div>
+        {/* 台词很长，读的时候人在下面看台词；旁边再放一份一模一样的开场面板，
+            吸顶跟着滚，不用滚回页面顶上去点开始 / 停止 */}
+        <div className="grid">
+          <div>
+            <ScriptView
+              lines={lines}
+              progress={progress}
+              schedule={schedule}
+              activeIdxs={activeIdxs}
+              currentIdx={currentIdx}
+              playing={phase === 'playing'}
+            />
+          </div>
+          <div className="sticky-col">{stagePanel}</div>
+        </div>
+        </>
       )}
 
       {compareTab && state && (
