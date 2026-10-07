@@ -94,6 +94,9 @@ export default function RoomPage() {
   const isCaptureDevice = Boolean(meRow?.capture);
   // 房主和收音设备能贴转录 / 摘要、发起打分
   const canEditCompare = isHost || isCaptureDevice;
+  // 收音设备（不是房主）只干一件事：把各产品的转录和摘要贴进来。
+  // 角色、台词、房间设置对它都没用，手机上全铺出来只是让人找不到入口。
+  const captureOnly = isCaptureDevice && !isHost;
   // 有任何产品已经打过分 → 谁都能点进去看；一个都没有 → 还没什么可看的，
   // 只让能编辑的人看到入口
   const hasAnyCompareResult = state?.comparisons.some((c) => c.result) ?? false;
@@ -209,7 +212,7 @@ export default function RoomPage() {
         </div>
       </div>
 
-      {audioState === 'blocked' && (
+      {audioState === 'blocked' && (!captureOnly || isAmbienceDevice) && (
         <div className="unlock">
           <span>
             This device can&apos;t play audio yet — browsers need one interaction first. Click
@@ -272,7 +275,36 @@ export default function RoomPage() {
         />
       )}
 
-      {!state ? (
+      {state && captureOnly ? (
+        <>
+          <div className="card">
+            <h2>This is the capture device</h2>
+            <p className="sub">
+              Record the meeting in My Notes, Granola and Otter on this device. When the reading is
+              done, copy each product&apos;s transcript and summary and paste them here.
+            </p>
+            <button className="primary big" style={{ width: '100%' }} onClick={() => setCompareTab('input')}>
+              Paste transcripts &amp; summaries
+            </button>
+            {hasAnyCompareResult && (
+              <button style={{ width: '100%', marginTop: 8 }} onClick={() => setCompareTab('result')}>
+                View results
+              </button>
+            )}
+          </div>
+          <DevicePanel
+            devices={state.devices}
+            speakers={state.speakers}
+            settings={state.settings}
+            myDeviceId={deviceId}
+            isHost={isHost}
+            onAutoAssign={actions.autoAssign}
+            onRename={actions.renameDevice}
+            onSetAmbienceDevice={(id) => actions.updateSettings({ ambienceDevice: id })}
+            onSetCapture={actions.setCapture}
+          />
+        </>
+      ) : !state ? (
         <div className="card">
           <p className="muted">Loading room…</p>
         </div>

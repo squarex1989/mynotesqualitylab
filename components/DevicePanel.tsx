@@ -72,9 +72,12 @@ export function DevicePanel({
                   )}
                   {isAmbience && <span className="pill on">ambience</span>}
                 </div>
-                <span className={`pill ${d.audioReady ? 'ok' : 'err'}`}>
-                  {d.audioReady ? 'audio ready' : 'audio blocked'}
-                </span>
+                {/* 收音设备不出声，声音解没解锁跟它无关（除非它还兼着环境音） */}
+                {(!d.capture || isAmbience) && (
+                  <span className={`pill ${d.audioReady ? 'ok' : 'err'}`}>
+                    {d.audioReady ? 'audio ready' : 'audio blocked'}
+                  </span>
+                )}
               </div>
 
               <div className="row tiny muted" style={{ marginTop: 8, gap: 6 }}>
