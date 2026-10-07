@@ -2,7 +2,7 @@
 
 import { useRef, useState } from 'react';
 import { api } from '@/lib/api';
-import { rememberRoom, setHostToken } from '@/lib/identity';
+import { setHostToken } from '@/lib/identity';
 import type { ImportResult } from '@/lib/types';
 
 const MAX_FILES = 100;
@@ -57,8 +57,8 @@ export function BatchImport({ onImported }: { onImported: () => void }) {
         const { results: got } = await api.importRooms(batch);
         for (const r of got) {
           if (r.ok && r.id && r.hostToken) {
+            // 只记 host token（出现在 Your rooms）；没进过的房间不算 Recent
             setHostToken(r.id, r.hostToken);
-            rememberRoom(r.id);
           }
         }
         all.push(...got);

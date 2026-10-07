@@ -826,3 +826,60 @@ table.scores .finding {
     margin-left: 2px;
   }
 }
+
+/* ---------- 首页：左栏操作，右栏房间列表 ---------- */
+.home-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 440px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 940px) {
+  .home-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.room-rows {
+  display: flex;
+  flex-direction: column;
+}
+.room-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.room-row:last-child {
+  border-bottom: none;
+}
+.room-row:hover {
+  background: var(--panel-2);
+}
+.room-row > .row {
+  flex-basis: 100%;
+}
+.room-row-main {
+  flex: 1 1 260px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.room-row-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.room-row-meta {
+  margin-left: auto;
+  white-space: nowrap;
+}
+.room-row-actions {
+  display: flex;
+  gap: 4px;
+}

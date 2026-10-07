@@ -59,7 +59,7 @@ export default function Home() {
   };
 
   return (
-    <div className="shell" style={{ maxWidth: 640, paddingTop: 64 }}>
+    <div className="shell" style={{ paddingTop: 48 }}>
       <h1 style={{ fontSize: 26, margin: '0 0 6px' }}>Transcript Reader</h1>
       <p className="muted" style={{ marginTop: 0 }}>
         Upload a transcript, hand each speaker to a different computer, and let them read the conversation out loud in their own voices.
@@ -76,6 +76,9 @@ export default function Home() {
         </div>
       )}
 
+      {/* 左栏：建房 / 进房 / 批量导入；右栏：房间列表 */}
+      <div className="home-grid">
+      <div>
       <div className="card">
         <label className="field">
           Name this device
@@ -115,8 +118,6 @@ export default function Home() {
         </button>
       </div>
 
-      <BatchImport onImported={() => setListKey((k) => k + 1)} />
-
       <div className="card">
         <h2>Join a room</h2>
         <p className="sub">Enter the 6-character room code from the host.</p>
@@ -142,13 +143,19 @@ export default function Home() {
 
       </div>
 
-      <RoomList refreshKey={listKey} />
+      <BatchImport onImported={() => setListKey((k) => k + 1)} />
 
       {error && (
         <div className="card" style={{ borderColor: 'rgba(239,111,111,.4)', color: 'var(--err)' }}>
           {error}
         </div>
       )}
+      </div>
+
+      <div>
+        <RoomList refreshKey={listKey} />
+      </div>
+      </div>
     </div>
   );
 }
