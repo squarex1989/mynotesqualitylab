@@ -60,9 +60,10 @@ export const VOICE_LIBRARY = [
       { id: 'c3e2da99e75949adb230b05889b172b1', label: 'German 2' },
       { id: '90042f762dbf49baa2e7776d011eee6b', label: 'German 3' },
       { id: 'e891954162584409bce5cf43aebd1726', label: 'German 4' },
-      { id: '88b18e0d81474a0ca08e2ea6f9df5ff4', label: 'German 5' },
-      { id: 'c5b66a80d90749fc914c714e793d1a2f', label: 'German 6' },
-      { id: '06e43704c489420cab97d20ea1d289a3', label: 'German 7' },
+      { id: '194b99d7c27e462ea40694cddf1f7c96', label: 'German 5' },
+      { id: '88b18e0d81474a0ca08e2ea6f9df5ff4', label: 'German 6' },
+      { id: 'c5b66a80d90749fc914c714e793d1a2f', label: 'German 7' },
+      { id: '06e43704c489420cab97d20ea1d289a3', label: 'German 8' },
     ],
   },
   {
