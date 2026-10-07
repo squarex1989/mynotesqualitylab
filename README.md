@@ -77,43 +77,13 @@ npm run dev
 
 ### 音色表
 
-Fish 没有官方的具名音色表 —— `voice` 是 [fish.audio](https://fish.audio) 音色库里的
-32 位十六进制 `reference_id`。公开库有一千多个音色，都带 `description` / `tags` /
-`languages` / 试听样本。有两种方式把它们变成这个项目的音色下拉。
+音色库写死在 `server/voice-library.js`，按国家（语种）分组：英文、中文、法语、德语、
+日语、葡萄牙语、西班牙语、意大利语、荷兰语，每组若干个 fish.audio `reference_id`。
+界面上**先选国家，再从该国家下选音色**；切换国家会自动选中该国的第一个音色。
+想增删音色直接改这个文件（id 全局唯一），重启服务生效。
 
-**方式一：自己挑好，把 ID 交给脚本（推荐）**
-
-去 [fish.audio/discovery](https://fish.audio/discovery/) 按语言和标签筛、试听，挑中的
-音色页地址是 `https://fish.audio/m/<32位ID>`。然后：
-
-```bash
-node scripts/voices-from-ids.mjs <id1> <id2> <id3>
-```
-
-ID 之间空格、逗号、换行都行，**直接粘完整 URL 也认**（脚本会把 ID 抠出来）。名字、
-描述、标签、语言、性别全自动填好。想往现有表里追加用 `--append`，ID 多的话用
-`--file ids.txt`。
-
-耳朵挑的比任何关键词规则都准 —— 尤其你要的「像开会说话」这种，Fish 的标签体系里
-根本没有对应的类别。
-
-**方式二：批量拉 + 自动筛**
-
-```bash
-node scripts/fetch-fish-voices.mjs --language en,zh,ja,de,fr,es --per-bucket 3
-```
-
-按「会议风」给候选打分：对话感、自然、平和的加分；播音、旁白、宣传、戏剧化的扣分；
-动漫、角色音、游戏、唱歌的直接排除。然后按**语种 × 性别**配额挑，保证各语种各性别
-都有覆盖。加 `--explain` 能看到每个音色命中了哪些关键词，`--style any` 则关掉筛选、
-纯按热度取。
-
-规则在 `scripts/lib/voice-filter.mjs`，觉得不合口味直接改那几个词表。
-
-两种方式都写 `$DATA_DIR/voices.fish.json`，服务按文件 mtime 自动重读，**不用重启**。
-没跑过的话会用一份内置兜底表（几个公开示例音色），界面上会提示。
-
-觉得某个音色不合适，直接编辑那个 JSON 删掉一条就行。
+不再读取 `$DATA_DIR/voices.fish.json`，也没有兜底表；`scripts/voices-from-ids.mjs`
+等脚本仍可用来查 fish.audio 上的音色信息，但不影响运行时的音色库。
 
 ### 转录对比
 
@@ -375,7 +345,8 @@ server.js              自定义 Node server：Next + Express + Socket.IO 一个
 server/
   db.js                node:sqlite 建表；音频文件路径
   parse.js             transcript 解析（纯文本 / 时间戳 / SRT / JSON）
-  voices.js            音色目录、各维度选项、风格标签拼装、随机配置
+  voices.js            音色目录（展平自 voice-library.js）、语速选项、随机配置
+  voice-library.js     音色库：按国家/语种分组的 reference_id（先选国家再选音色）
   tts.js               Fish API 调用（msgpack）、内容寻址缓存、时长探测、限流重试
   generate.js          房间级的批量合成任务（限并发、推进度、跑完再扫一遍）
   schedule.js          把台词排成带绝对偏移的时间线（有序 / 抢话 / 压音量）

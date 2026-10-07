@@ -17,8 +17,15 @@ export interface VoiceInfo {
   label: string;
   gender: 'male' | 'female' | 'neutral';
   note: string;
-  tags?: string[];
+  country: string;
   languages?: string[];
+}
+
+export interface CountryInfo {
+  code: string;
+  label: string;
+  labelZh: string;
+  count: number;
 }
 
 export interface TtsModelInfo {
@@ -222,7 +229,7 @@ export interface Meta {
   models: TtsModelInfo[];
   defaultModel: string;
   /** Voice list is still the built-in fallback (fetch-fish-voices hasn't been run) */
-  fallbackVoices: boolean;
+  countries: CountryInfo[];
   titleMaxWeight: number;
   ttsConfigured: boolean;
   ttsProblem: string | null;
