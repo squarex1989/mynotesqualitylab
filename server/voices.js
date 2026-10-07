@@ -11,18 +11,45 @@
 
 import { VOICE_LIBRARY } from './voice-library.js';
 
+import { VOICE_TAGS } from './voice-tags.js';
+
 // 音色库按国家（语种）分组，见 voice-library.js。展平成一张表，
 // 每条带上所属国家，前端先选国家、再从该国家的音色里选。
-const ALL_VOICES = VOICE_LIBRARY.flatMap((c) =>
-  c.voices.map((v) => ({
+
+// 标签里的国家 / 语种名不展示 —— 国家已经是上一级下拉了
+const COUNTRY_TAGS = new Set([
+  'chinese', 'english', 'french', 'german', 'japanese', 'portuguese',
+  'brazilian portuguese', 'spanish', 'italian', 'dutch',
+]);
+const ACCENT_RE = /accent|taiwanese|british/i;
+const MAX_TAGS = 4;
+
+/**
+ * 展示用标签：最多 4 个，口音一律排在最后（单独返回，前端放括号里）。
+ * 人工标注的 accent 优先于 fish.audio 标签里的口音。
+ */
+function describe(v) {
+  const raw = VOICE_TAGS[v.id]?.tags ?? [];
+  const accents = v.accent ? [v.accent] : raw.filter((t) => ACCENT_RE.test(t));
+  const plain = raw.filter((t) => !ACCENT_RE.test(t) && !COUNTRY_TAGS.has(t.toLowerCase()));
+  return { tags: plain.slice(0, MAX_TAGS - accents.length), accents };
+}
+
+// 每个国家内：带口音的排在后面，别让口音音色成为默认的第一个
+const ALL_VOICES = VOICE_LIBRARY.flatMap((c) => {
+  const items = c.voices.map((v) => ({ v, ...describe(v) }));
+  const sorted = [...items.filter((x) => !x.accents.length), ...items.filter((x) => x.accents.length)];
+  return sorted.map(({ v, tags, accents }, i) => ({
     id: v.id,
-    label: v.label,
+    label: `${c.label} ${i + 1}`,
     gender: 'neutral',
-    note: v.note || '',
+    note: accents.join(', '),
+    tags,
+    accents,
     country: c.code,
     languages: [c.code],
-  }))
-);
+  }));
+});
 
 const COUNTRIES = VOICE_LIBRARY.map((c) => ({
   code: c.code,

@@ -17,6 +17,8 @@ export interface VoiceInfo {
   label: string;
   gender: 'male' | 'female' | 'neutral';
   note: string;
+  tags: string[];
+  accents: string[];
   country: string;
   languages?: string[];
 }
