@@ -174,17 +174,13 @@ export default function RoomPage() {
             >
               <span className="roomcode">{roomId}</span>
             </button>
-            {/* Compare 入口。没有任何产品打过分之前只对房主和收音设备可见 ——
-                只有它们能贴转录、发起打分；一旦有分了，谁都能看。 */}
-            {state && (hasAnyCompareResult || canEditCompare) && (
-              <button
-                className="small ghost"
-                onClick={() => setCompareTab(hasAnyCompareResult ? 'result' : 'input')}
-              >
-                Compare
-              </button>
+            {isHost && (
+              <RoomSwitcher
+                currentRoomId={roomId}
+                othersOnline={state?.devices.filter((d) => d.online && d.id !== deviceId).length ?? 0}
+                onSwitch={switchRoom}
+              />
             )}
-            {isHost && <RoomSwitcher currentRoomId={roomId} onSwitch={switchRoom} />}
           </div>
         </div>
 
@@ -267,7 +263,8 @@ export default function RoomPage() {
           comparisons={state.comparisons}
           onOpen={
             canEditCompare
-              ? () => setCompareTab('input')
+              ? // 房主有结果时先看结果；收音设备的活就是贴，直接进 Input
+                () => setCompareTab(isHost && hasAnyCompareResult ? 'result' : 'input')
               : hasAnyCompareResult
                 ? () => setCompareTab('result')
                 : undefined
