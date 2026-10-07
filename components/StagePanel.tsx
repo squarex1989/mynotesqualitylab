@@ -15,7 +15,8 @@ interface Props {
   /** Everyone has preloaded; waiting for the ambience device to report YouTube is audible */
   waitingAmbience?: boolean;
   myDeviceId: string;
-  onStart: () => void;
+  onStart: (fromIdx?: number) => void;
+  onPause: () => void;
   onStop: () => void;
   onGenerate: () => void;
 }
@@ -37,9 +38,11 @@ export function StagePanel({
   waitingAmbience,
   myDeviceId,
   onStart,
+  onPause,
   onStop,
   onGenerate,
 }: Props) {
+  const pausedIdx = state.pausedIdx ?? null;
   const ready = progress ? progress.ready : 0;
   const total = progress ? progress.total : 0;
   const pct = total ? Math.round((ready / total) * 100) : 0;
@@ -113,15 +116,33 @@ export function StagePanel({
                 </>
               )}
 
-              {done && (
-                <button className="primary big" style={{ width: '100%' }} onClick={onStart}>
+              {done && pausedIdx !== null && (
+                <>
+                  <button className="primary big" style={{ width: '100%' }} onClick={() => onStart(pausedIdx)}>
+                    ▶ Resume from line {pausedIdx + 1}
+                  </button>
+                  <div className="row" style={{ gap: 6 }}>
+                    <button style={{ flex: 1 }} onClick={() => onStart()}>
+                      Start over
+                    </button>
+                    <button className="ghost" style={{ flex: 1 }} onClick={onStop}>
+                      Reset
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {done && pausedIdx === null && (
+                <button className="primary big" style={{ width: '100%' }} onClick={() => onStart()}>
                   Start reading
                 </button>
               )}
             </div>
           ) : (
             <p className="tiny muted">
-              {done
+              {done && pausedIdx !== null
+                ? `Paused at line ${pausedIdx + 1}.`
+                : done
                 ? 'Waiting for the host to start.'
                 : generating
                   ? 'The host is synthesizing audio…'
@@ -161,9 +182,14 @@ export function StagePanel({
             <span className="tiny muted">{overlaps} interruptions scheduled for this run</span>
           )}
           {isHost && (
-            <button className="danger" onClick={onStop}>
-              Stop
-            </button>
+            <div className="row" style={{ gap: 6 }}>
+              <button style={{ flex: 1 }} onClick={onPause}>
+                ❚❚ Pause
+              </button>
+              <button className="danger" style={{ flex: 1 }} onClick={onStop}>
+                Stop
+              </button>
+            </div>
           )}
         </div>
       )}

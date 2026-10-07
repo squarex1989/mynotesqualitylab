@@ -358,6 +358,56 @@ console.log('\n5) 有环境音时，YouTube 出声后才开始念');
   amb.s.close();
 }
 
+// ---------------------------------------------------------------- 6
+console.log('\n6) 从某一句开始播 / 暂停 / 继续');
+{
+  const room = makeRoom(['Alice', 'Bob', 'Carol']);
+  for (const tgt of rooms.lineTargets(room.id)) {
+    fs.writeFileSync(audioPath(tgt.hash), 'x');
+    db.prepare('INSERT OR REPLACE INTO audio (hash, duration_ms, bytes, created_at) VALUES (?, 2000, 1, ?)').run(tgt.hash, Date.now());
+  }
+  const host = await open(room.id, 'host', room.hostToken);
+  await settle();
+  host.s.on('play:prepare', (p) => host.s.emit('play:ready', { token: p.token }));
+  const lastState = () => [...host.events].reverse().find((e) => e.name === 'state')?.payload.state;
+
+  host.events.length = 0;
+  host.s.emit('room:start', { fromIdx: 1 });
+  await settle(300);
+  const prep = host.events.find((e) => e.name === 'play:prepare')?.payload;
+  t('★ 从第 2 句开始：排期第一条就是第 2 句，从 0 开始', prep?.items[0]?.idx === 1 && prep.items[0].startMs === 0,
+    JSON.stringify(prep?.items?.map((i) => [i.idx, i.startMs])));
+  t('之前的句子不在排期里', !prep?.items.some((i) => i.idx < 1));
+
+  await settle(1300); // GO_LEAD_MS 之后，第 2 句正在念
+  host.events.length = 0;
+  host.s.emit('room:pause');
+  await settle(200);
+  t('暂停时各设备收到 play:stop(paused)', host.events.some((e) => e.name === 'play:stop' && e.payload.reason === 'paused'));
+  t('★ 暂停记下了正在念的那一句', lastState()?.pausedIdx === 1, String(lastState()?.pausedIdx));
+  t('暂停后房间不是 playing', lastState()?.status === 'idle');
+
+  host.events.length = 0;
+  host.s.emit('room:start', { fromIdx: 1 });
+  await settle(300);
+  t('继续：从暂停的那一句重新开始', host.events.find((e) => e.name === 'play:prepare')?.payload.items[0].idx === 1);
+  t('继续之后暂停标记清掉', lastState()?.pausedIdx === null);
+
+  host.events.length = 0;
+  host.s.emit('room:start', { fromIdx: 2 });
+  await settle(300);
+  t('播放中点另一句：先停再从那一句开始',
+    host.events.some((e) => e.name === 'play:stop' && e.payload.reason === 'restart') &&
+      host.events.find((e) => e.name === 'play:prepare')?.payload.items[0].idx === 2);
+
+  host.s.emit('room:pause');
+  await settle(150);
+  host.s.emit('room:stop');
+  await settle(150);
+  t('停止会清掉暂停标记', lastState()?.pausedIdx === null);
+  host.s.close();
+}
+
 server.close();
 fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true });
 

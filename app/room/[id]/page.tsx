@@ -159,6 +159,7 @@ export default function RoomPage() {
         waitingAmbience={waitingAmbience}
         myDeviceId={deviceId}
         onStart={actions.start}
+        onPause={actions.pause}
         onStop={actions.stop}
         onGenerate={actions.startGeneration}
       />
@@ -410,6 +411,7 @@ export default function RoomPage() {
               activeIdxs={activeIdxs}
               currentIdx={currentIdx}
               playing={phase === 'playing'}
+              onPlayFrom={isHost ? (idx) => actions.start(idx) : undefined}
             />
           </div>
           <div className="sticky-col">{stagePanel}</div>

@@ -293,6 +293,8 @@ export interface RoomState {
   devices: Device[];
   lineCount: number;
   comparisons: Comparison[];
+  /** Paused on this line (idx); resuming starts from the beginning of it */
+  pausedIdx?: number | null;
 }
 
 export interface Progress {

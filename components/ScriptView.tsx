@@ -10,9 +10,23 @@ interface Props {
   activeIdxs: Set<number>;
   currentIdx: number;
   playing: boolean;
+  /** 房主才有「从这一句开始播」的按钮 */
+  onPlayFrom?: (idx: number) => void;
 }
 
-export function ScriptView({ lines, progress, schedule, activeIdxs, currentIdx, playing }: Props) {
+const NOT_READY_TIP = 'All audio needs to be ready before you can play from here';
+
+export function ScriptView({
+  lines,
+  progress,
+  schedule,
+  activeIdxs,
+  currentIdx,
+  playing,
+  onPlayFrom,
+}: Props) {
+  // 所有句子都合成好了才能从中间开播；没好时按钮照样出现，悬停说明原因
+  const allReady = Boolean(progress && progress.total > 0 && progress.ready === progress.total);
   const boxRef = useRef<HTMLDivElement | null>(null);
   const overlapAt = new Set(schedule.filter((s) => s.overlapMs > 0).map((s) => s.idx));
 
@@ -41,11 +55,24 @@ export function ScriptView({ lines, progress, schedule, activeIdxs, currentIdx, 
               className={`line${active ? ' active' : ''}${past ? ' past' : ''}`}
             >
               <span className="no">
-                <span
-                  className={`dot ${failed ? 'err' : ready ? 'ok' : ''}`}
-                  style={{ display: 'inline-block', marginRight: 4 }}
-                />
-                {l.idx + 1}
+                <span className="no-inner">
+                  <span
+                    className={`dot ${failed ? 'err' : ready ? 'ok' : ''}`}
+                    style={{ display: 'inline-block', marginRight: 4 }}
+                  />
+                  {l.idx + 1}
+                </span>
+                {onPlayFrom && (
+                  <button
+                    className={`play-from${allReady ? '' : ' off'}`}
+                    aria-disabled={!allReady}
+                    aria-label={allReady ? `Play from line ${l.idx + 1}` : NOT_READY_TIP}
+                    data-tip={allReady ? `Play from line ${l.idx + 1}` : NOT_READY_TIP}
+                    onClick={() => allReady && onPlayFrom(l.idx)}
+                  >
+                    ▶
+                  </button>
+                )}
               </span>
               <span className="who">{l.speaker}</span>
               <span>
