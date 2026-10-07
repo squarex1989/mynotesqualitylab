@@ -108,8 +108,12 @@ export function getDevices(roomId) {
 /* transcript                                                          */
 /* ------------------------------------------------------------------ */
 
-/** 上传 transcript。房间一旦 locked 就不再接受新的 transcript。 */
-export function setTranscript(roomId, parsed) {
+/**
+ * 上传 transcript。房间一旦 locked 就不再接受新的 transcript。
+ * plan 是批量导入按要求挑好的配置：voices（说话人 → 音色）、config（如语速）；
+ * 不给就随机挑音色。
+ */
+export function setTranscript(roomId, parsed, plan = {}) {
   const room = getRoom(roomId);
   if (!room) throw new Error('Room not found');
   if (room.locked) throw new Error('This room already has a transcript and it cannot be replaced');
@@ -129,9 +133,11 @@ export function setTranscript(roomId, parsed) {
 
     const used = [];
     for (const name of parsed.speakers) {
-      const { voice, config, instructions } = randomSpeakerConfig({ avoidVoices: used });
+      const random = randomSpeakerConfig({ avoidVoices: used });
+      const voice = plan.voices?.[name] ? normalizeVoice(plan.voices[name]) : random.voice;
+      const config = plan.config ? normalizeConfig({ ...random.config, ...plan.config }) : random.config;
       used.push(voice);
-      insertSpeaker.run(roomId, name, voice, JSON.stringify(config), instructions);
+      insertSpeaker.run(roomId, name, voice, JSON.stringify(config), random.instructions);
     }
 
     db.prepare('UPDATE rooms SET locked = 1 WHERE id = ?').run(roomId);
@@ -218,6 +224,7 @@ export function randomizeAllSpeakers(roomId) {
 /* devices / 分配                                                       */
 /* ------------------------------------------------------------------ */
 
+/** @returns {boolean} 这台设备是不是刚上线（新设备，或者之前是离线的） */
 export function upsertDevice(roomId, { id, name, isHost }) {
   const existing = db.prepare('SELECT * FROM devices WHERE room_id = ? AND id = ?').get(roomId, id);
   if (existing) {
@@ -232,6 +239,7 @@ export function upsertDevice(roomId, { id, name, isHost }) {
   if (isHost) {
     db.prepare('UPDATE rooms SET host_device = ? WHERE id = ?').run(id, roomId);
   }
+  return !existing || !existing.online;
 }
 
 /**
@@ -310,6 +318,10 @@ export function renameDevice(roomId, deviceId, name) {
 }
 
 export function assignSpeaker(roomId, speaker, deviceId) {
+  if (deviceId) {
+    const d = db.prepare('SELECT capture FROM devices WHERE room_id = ? AND id = ?').get(roomId, deviceId);
+    if (d?.capture) throw new Error('That is a capture device — it records, it never reads');
+  }
   db.prepare('UPDATE speakers SET device_id = ? WHERE room_id = ? AND name = ?').run(
     deviceId || null,
     roomId,
@@ -317,38 +329,120 @@ export function assignSpeaker(roomId, speaker, deviceId) {
   );
 }
 
-/** 把角色平均摊到在线设备上。已有的分配如果设备还在线就保留。 */
-export function autoAssignDevices(roomId, { force = false } = {}) {
-  const room = getRoom(roomId);
-  if (!room) return;
+// 离线这么久以内的设备仍算「还在」：断线重连、或者刚被房主带进来还没连上
+// （moveDevicesToRoom 预先写好的行）。超过就当它不在了，台词分给别人。
+const ASSIGN_GRACE_MS = 30 * 1000;
 
-  const devices = getDevices(roomId).filter((d) => d.online);
-  const pool = devices.length ? devices : getDevices(roomId);
+/** 能念台词的设备：在线（或刚离线）且不是收音设备。尽量不用环境音设备。 */
+function readerPool(roomId) {
+  const room = getRoom(roomId);
+  const now = Date.now();
+  const present = getDevices(roomId).filter(
+    (d) => !d.capture && (d.online || now - d.last_seen < ASSIGN_GRACE_MS)
+  );
+  // 环境音设备可以兼职念台词，但还有别的机器可用时就别让它兼职
+  const free = present.filter((d) => d.id !== room?.ambience_device);
+  return free.length ? free : present;
+}
+
+/**
+ * 把角色平均摊到能念台词的设备上。
+ *   - 已有的分配如果设备还在池子里就保留（force 时全部重分）
+ *   - 没分配 / 分给了不在池子里的设备的，交给当前最闲的那台
+ *   - 最后削峰填谷：最忙和最闲的设备相差超过 1 个角色就挪一个过去 ——
+ *     新设备进来时靠这一步分到角色，而不是干坐着
+ * 设备比角色多时，有的设备一个角色都分不到，这是正常的。
+ */
+export function autoAssignDevices(roomId, { force = false } = {}) {
+  const pool = readerPool(roomId);
   if (!pool.length) return;
 
   const speakers = getSpeakers(roomId);
-  const onlineIds = new Set(pool.map((d) => d.id));
+  const load = new Map(pool.map((d) => [d.id, []]));
+  const pending = [];
 
-  // 环境音设备如果还有别的机器可用，就别让它兼职念台词
-  const free = pool.filter((d) => d.id !== room.ambience_device);
-  const targets = free.length ? free : pool;
-  if (!targets.length) return;
+  for (const s of speakers) {
+    if (!force && s.device_id && load.has(s.device_id)) load.get(s.device_id).push(s);
+    else pending.push(s);
+  }
 
   // 打散一下，避免总是同一台机器拿到第一个角色
-  const order = [...targets].sort(() => Math.random() - 0.5);
+  const order = [...pool].sort(() => Math.random() - 0.5).map((d) => d.id);
+  const lightest = () => order.reduce((best, id) => (load.get(id).length < load.get(best).length ? id : best));
+  const heaviest = () => order.reduce((best, id) => (load.get(id).length > load.get(best).length ? id : best));
 
-  let cursor = 0;
-  for (const s of speakers) {
-    const keep =
-      !force &&
-      s.device_id &&
-      onlineIds.has(s.device_id) &&
-      s.device_id !== room.ambience_device;
-    if (keep) continue;
-    const device = order[cursor % order.length];
-    cursor++;
-    assignSpeaker(roomId, s.name, device.id);
+  for (const s of pending) load.get(lightest()).push(s);
+
+  for (let guard = 0; guard < speakers.length; guard++) {
+    const from = heaviest();
+    const to = lightest();
+    if (load.get(from).length - load.get(to).length <= 1) break;
+    load.get(to).push(load.get(from).pop());
   }
+
+  for (const [deviceId, list] of load) {
+    for (const s of list) {
+      if (s.device_id !== deviceId) assignSpeaker(roomId, s.name, deviceId);
+    }
+  }
+}
+
+/**
+ * 设成 / 取消收音设备。收音设备绝不念台词：设上时把它身上的角色分给别人；
+ * 取消时它重新回到朗读池，顺手均衡一下。
+ */
+export function setDeviceCapture(roomId, deviceId, on) {
+  const exists = db.prepare('SELECT 1 FROM devices WHERE room_id = ? AND id = ?').get(roomId, deviceId);
+  if (!exists) throw new Error('No such device');
+  db.prepare('UPDATE devices SET capture = ? WHERE room_id = ? AND id = ?').run(on ? 1 : 0, roomId, deviceId);
+  if (on) {
+    db.prepare('UPDATE speakers SET device_id = NULL WHERE room_id = ? AND device_id = ?').run(roomId, deviceId);
+  }
+  autoAssignDevices(roomId);
+}
+
+/**
+ * 房主换房间时把设备一起带过去。
+ *
+ * 在目标房间里预先写好这些设备的行（离线，last_seen=现在），保留它们的角色：
+ *   - 收音设备仍是收音设备
+ *   - 原房间的环境音设备成为目标房间的环境音设备
+ *   - 其余设备按目标房间的角色数重新分配台词（角色少于设备时有的设备没有台词）
+ * 预写的行落在 ASSIGN_GRACE_MS 之内，所以第一台连上的设备不会把台词全揽走。
+ *
+ * @param {string[]} deviceIds 要带走的设备（原房间里在线的那些）
+ */
+export function moveDevicesToRoom(fromRoomId, toRoomId, deviceIds) {
+  const from = getRoom(fromRoomId);
+  const to = getRoom(toRoomId);
+  if (!from || !to) throw new Error('Room not found');
+  const moving = getDevices(fromRoomId).filter((d) => deviceIds.includes(d.id));
+  const now = Date.now();
+
+  db.exec('BEGIN');
+  try {
+    for (const d of moving) {
+      db.prepare(
+        `INSERT INTO devices (id, room_id, name, is_host, capture, online, last_seen)
+         VALUES (?, ?, ?, ?, ?, 0, ?)
+         ON CONFLICT(room_id, id) DO UPDATE SET
+           name = excluded.name, capture = excluded.capture, last_seen = excluded.last_seen`
+      ).run(d.id, toRoomId, d.name, d.is_host, d.capture, now);
+    }
+    if (from.ambience_device && deviceIds.includes(from.ambience_device)) {
+      db.prepare('UPDATE rooms SET ambience_device = ? WHERE id = ?').run(from.ambience_device, toRoomId);
+    }
+    // 收音设备身上不能有台词
+    for (const d of moving.filter((m) => m.capture)) {
+      db.prepare('UPDATE speakers SET device_id = NULL WHERE room_id = ? AND device_id = ?').run(toRoomId, d.id);
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+  autoAssignDevices(toRoomId, { force: true });
+  return moving.map((d) => d.id);
 }
 
 /* ------------------------------------------------------------------ */
@@ -390,20 +484,8 @@ export function updateRoomSettings(roomId, patch) {
   if (!sets.length) return;
   vals.push(roomId);
   db.prepare(`UPDATE rooms SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
-
-  // 环境音设备不该同时念台词：把它身上的角色挪走
-  // （前提是还有别的设备可用，否则宁可让它兼职也别让台词没人读）
-  if (patch.ambienceDevice !== undefined) {
-    const room = getRoom(roomId);
-    const busy = room.ambience_device;
-    if (busy) {
-      const others = getDevices(roomId).filter((d) => d.id !== busy);
-      if (others.length) {
-        const stuck = getSpeakers(roomId).filter((s) => s.device_id === busy);
-        stuck.forEach((s, i) => assignSpeaker(roomId, s.name, others[i % others.length].id));
-      }
-    }
-  }
+  // 环境音设备可以同时念台词，所以这里不再把它身上的角色挪走 ——
+  // 只是之后自动分配时会优先用别的设备（见 readerPool）。
 }
 
 /** 给房间改名。返回规整后的名字（空名会被存成 null，界面上显示房间号）。 */
@@ -459,6 +541,7 @@ export function getComparisons(roomId) {
     .map((r) => ({
       product: r.product,
       transcript: r.transcript,
+      summary: r.summary || '',
       result: r.result ? JSON.parse(r.result) : null,
       state: r.state,
       error: r.error,
@@ -466,20 +549,37 @@ export function getComparisons(roomId) {
     }));
 }
 
-/** 存下某个产品的转录文本，状态回到 idle（还没跑分） */
-export function putComparisonTranscript(roomId, product, transcript) {
-  const text = String(transcript ?? '').trim();
-  if (!text) {
+/**
+ * 存下某个产品的转录和 / 或摘要。只改传进来的那个字段。
+ * 转录变了 → 打分结果作废、状态回到 idle；只改摘要不影响转录的分数。
+ * 两样都空了就整行删掉。
+ */
+export function putComparison(roomId, product, { transcript, summary } = {}) {
+  const row = db
+    .prepare('SELECT transcript, summary FROM comparisons WHERE room_id = ? AND product = ?')
+    .get(roomId, product);
+  const nextTranscript = transcript !== undefined ? String(transcript ?? '').trim() : row?.transcript ?? '';
+  const nextSummary = summary !== undefined ? String(summary ?? '').trim() : row?.summary ?? '';
+
+  if (!nextTranscript && !nextSummary) {
     db.prepare('DELETE FROM comparisons WHERE room_id = ? AND product = ?').run(roomId, product);
     return;
   }
+  const transcriptChanged = !row || nextTranscript !== row.transcript;
   db.prepare(
-    `INSERT INTO comparisons (room_id, product, transcript, result, state, error, updated_at)
-     VALUES (?, ?, ?, NULL, 'idle', NULL, ?)
+    `INSERT INTO comparisons (room_id, product, transcript, summary, result, state, error, updated_at)
+     VALUES (?, ?, ?, ?, NULL, 'idle', NULL, ?)
      ON CONFLICT(room_id, product) DO UPDATE SET
        transcript = excluded.transcript,
-       result = NULL, state = 'idle', error = NULL, updated_at = excluded.updated_at`
-  ).run(roomId, product, text, Date.now());
+       summary = excluded.summary,
+       updated_at = excluded.updated_at
+       ${transcriptChanged ? ", result = NULL, state = 'idle', error = NULL" : ''}`
+  ).run(roomId, product, nextTranscript, nextSummary || null, Date.now());
+}
+
+/** 兼容旧调用：只存转录 */
+export function putComparisonTranscript(roomId, product, transcript) {
+  putComparison(roomId, product, { transcript });
 }
 
 export function setComparisonState(roomId, product, state, { result, error } = {}) {
@@ -595,6 +695,7 @@ export function roomState(roomId) {
     id: d.id,
     name: d.name,
     isHost: Boolean(d.is_host),
+    capture: Boolean(d.capture),
     online: Boolean(d.online),
   }));
 

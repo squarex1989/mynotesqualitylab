@@ -26,8 +26,13 @@ export type AudioState = 'checking' | 'ready' | 'blocked';
 
 const SYNC_ROUNDS = 6;
 
-export function useRoom(roomId: string) {
+export function useRoom(roomId: string, { onGoto }: { onGoto?: (roomId: string) => void } = {}) {
   const socketRef = useRef<Socket | null>(null);
+  // 房主换房间并让设备跟随时，服务端会推 room:goto；页面负责跳转
+  const onGotoRef = useRef(onGoto);
+  onGotoRef.current = onGoto;
+  // 本场是不是已经由 ambience:start 提前开播了环境音（play:go 时就不再重复开播）
+  const ambienceStartedRef = useRef<string | null>(null);
   const engineRef = useRef<AudioEngine | null>(null);
   const ambienceRef = useRef<AmbiencePlayer | null>(null);
 
@@ -52,6 +57,8 @@ export function useRoom(roomId: string) {
   const [overlaps, setOverlaps] = useState(0);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [prepareRemaining, setPrepareRemaining] = useState(0);
+  // 所有设备都预加载好了，在等环境音设备报告 YouTube 出声
+  const [waitingAmbience, setWaitingAmbience] = useState(false);
   const startAtLocalRef = useRef(0);
 
   const [audioState, setAudioState] = useState<AudioState>('checking');
@@ -97,23 +104,20 @@ export function useRoom(roomId: string) {
     };
   }, [pushToast]);
 
-  // 解码失败、音频取不下来这些以前是 catch 里一个裸 return —— 没声音又没解释，
-  // 是最糟的结果。现在让它说话。
-  useEffect(() => {
-    const engine = engineRef.current;
-    if (!engine) return;
-    engine.onTrouble = (message) => pushToast('error', message);
-    return () => {
-      engine.onTrouble = null;
-    };
-  }, [pushToast]);
-
   /* ---------------- socket ---------------- */
   useEffect(() => {
     if (!roomId) return;
 
     const myId = getDeviceId();
     setDeviceId(myId);
+
+    // 换房间时（房主带着设备跳过来）上一个房间的东西不能留在界面上
+    setState(null);
+    setProgress(null);
+    setLines([]);
+    setPhase('idle');
+    setSchedule([]);
+    setWaitingAmbience(false);
 
     const socket = io({
       path: '/socket.io',
@@ -159,22 +163,41 @@ export function useRoom(roomId: string) {
       setPrepareRemaining(remaining)
     );
 
+    // 环境音设备：先把 YouTube 放出来，真出声了再告诉服务端，大家才开始念
+    socket.on('ambience:start', ({ token, deviceId: ambId }: { token: string; deviceId: string }) => {
+      setWaitingAmbience(true);
+      if (ambId !== myId) return;
+      const amb = ambienceRef.current;
+      if (!amb?.isReady) return; // 没准备好就不报，服务端超时后照常开始
+      ambienceStartedRef.current = token;
+      void amb.startAndWait().then((ok) => {
+        if (ok) socket.emit('ambience:playing', { token });
+      });
+    });
+
     socket.on('play:go', ({ token, startAt }: { token: string; startAt: number }) => {
       const localStart = startAt - offsetRef.current;
       startAtLocalRef.current = localStart;
       setPhase('playing');
+      setWaitingAmbience(false);
       engineRef.current?.start(token, localStart);
       const amb = ambienceRef.current;
-      if (amb?.isReady) {
+      if (amb?.isReady && ambienceStartedRef.current !== token) {
         const delay = Math.max(0, localStart - Date.now());
         setTimeout(() => amb.play(), delay);
       }
     });
 
+    socket.on('room:goto', ({ roomId: next }: { roomId: string }) => {
+      if (next && next !== roomId) onGotoRef.current?.(next);
+    });
+
     socket.on('play:stop', ({ reason }: { reason: string }) => {
       engineRef.current?.stop();
       ambienceRef.current?.stop();
+      ambienceStartedRef.current = null;
       setPhase('idle');
+      setWaitingAmbience(false);
       setElapsedMs(0);
       setPrepareRemaining(0);
       if (reason === 'finished') pushToast('success', 'Done reading');
@@ -182,12 +205,15 @@ export function useRoom(roomId: string) {
 
     return () => {
       engineRef.current?.stop();
-      ambienceRef.current?.destroy();
+      // 换房间时只停不拆：同一个播放器已经在手势里解锁过，拆掉重建就要再点一次
+      ambienceRef.current?.stop();
       socket.close();
       socketRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId]);
+
+  useEffect(() => () => ambienceRef.current?.destroy(), []);
 
   /* ---------------- 声音解锁 ----------------
    * 浏览器要的是「任意用户手势」，不是「点那个特定按钮」。所以这里：
@@ -371,8 +397,21 @@ export function useRoom(roomId: string) {
       start: () => emit('room:start'),
       stop: () => emit('room:stop'),
       startGeneration: () => emit('generation:start'),
-      putComparison: (product: string, transcript: string) =>
-        emit('compare:put', { product, transcript }),
+      putComparison: (product: string, patch: { transcript?: string; summary?: string }) =>
+        emit('compare:put', { product, ...patch }),
+      setCapture: (targetDeviceId: string, on: boolean) =>
+        emit('device:capture', { deviceId: targetDeviceId, on }),
+      /** 换房间。follow = 让这个房间里在线的设备一起过去 */
+      moveRoom: (targetRoomId: string, targetHostToken: string, follow: boolean) =>
+        new Promise<{ ok: boolean; error?: string; moved?: number }>((resolve) => {
+          const socket = socketRef.current;
+          if (!socket) return resolve({ ok: false, error: 'Not connected' });
+          const timer = setTimeout(() => resolve({ ok: false, error: 'The server did not answer' }), 8000);
+          socket.emit('room:move', { targetRoomId, targetHostToken, follow }, (res: any) => {
+            clearTimeout(timer);
+            resolve(res ?? { ok: false });
+          });
+        }),
       scoreComparison: (product: string) => emit('compare:score', { product }),
       setGlossary: (text: string) => emit('compare:glossary', { text }),
     }),
@@ -413,6 +452,7 @@ export function useRoom(roomId: string) {
     overlaps,
     elapsedMs,
     prepareRemaining,
+    waitingAmbience,
     currentIdx,
     activeIdxs,
     audioState,

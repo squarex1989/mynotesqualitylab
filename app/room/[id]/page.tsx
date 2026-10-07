@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
-import { rememberRoom } from '@/lib/identity';
+import { getHostToken, rememberRoom } from '@/lib/identity';
 import { useRoom } from '@/lib/useRoom';
 import type { Meta } from '@/lib/types';
 import { TranscriptUploader } from '@/components/TranscriptUploader';
@@ -13,7 +13,9 @@ import { DevicePanel } from '@/components/DevicePanel';
 import { ToneSettings } from '@/components/ToneSettings';
 import { ScriptView } from '@/components/ScriptView';
 import { StagePanel } from '@/components/StagePanel';
-import { CompareModal } from '@/components/CompareModal';
+import { CompareModal, type CompareTab } from '@/components/CompareModal';
+import { CompareStatus } from '@/components/CompareStatus';
+import { RoomSwitcher } from '@/components/RoomSwitcher';
 import { isIosLike } from '@/lib/audioEngine';
 
 export default function RoomPage() {
@@ -22,10 +24,13 @@ export default function RoomPage() {
 
   const [meta, setMeta] = useState<Meta | null>(null);
   const [copied, setCopied] = useState(false);
-  const [compareOpen, setCompareOpen] = useState(false);
+  // null = 关着；否则是打开时落在哪个 tab
+  const [compareTab, setCompareTab] = useState<CompareTab | null>(null);
   const [diagCopied, setDiagCopied] = useState(false);
+  const router = useRouter();
 
-  const room = useRoom(roomId);
+  // 房主换房间并让设备跟随时，所有跟随的设备都会收到 room:goto
+  const room = useRoom(roomId, { onGoto: (next) => router.push(`/room/${next}`) });
   const {
     connected,
     fatal,
@@ -41,6 +46,7 @@ export default function RoomPage() {
     overlaps,
     elapsedMs,
     prepareRemaining,
+    waitingAmbience,
     currentIdx,
     activeIdxs,
     audioState,
@@ -85,9 +91,30 @@ export default function RoomPage() {
     ? state.speakers.filter((sp) => sp.deviceId === deviceId).reduce((n, sp) => n + sp.lineCount, 0)
     : 0;
   const isAmbienceDevice = state?.settings.ambienceDevice === deviceId;
+  const isCaptureDevice = Boolean(meRow?.capture);
+  // 房主和收音设备能贴转录 / 摘要、发起打分
+  const canEditCompare = isHost || isCaptureDevice;
   // 有任何产品已经打过分 → 谁都能点进去看；一个都没有 → 还没什么可看的，
-  // 只让房主看到入口（她才能贴转录、发起打分）
+  // 只让能编辑的人看到入口
   const hasAnyCompareResult = state?.comparisons.some((c) => c.result) ?? false;
+
+  // 一台设备被设成收音设备的那一刻，直接弹出 Compare 并停在 Input，等着贴转录和摘要
+  const wasCapture = useRef(false);
+  useEffect(() => {
+    if (isCaptureDevice && !wasCapture.current) setCompareTab('input');
+    wasCapture.current = isCaptureDevice;
+  }, [isCaptureDevice]);
+
+  const switchRoom = async (target: string, follow: boolean): Promise<string | null> => {
+    const token = getHostToken(target);
+    if (!token) return 'This device is not the host of that room';
+    if (follow) {
+      const res = await actions.moveRoom(target, token, true);
+      if (!res.ok) return res.error || 'Could not move the devices';
+    }
+    router.push(`/room/${target}`);
+    return null;
+  };
 
   // 手机上没法看控制台，这一行要能一键复制出来
   const diagLine =
@@ -144,13 +171,17 @@ export default function RoomPage() {
             >
               <span className="roomcode">{roomId}</span>
             </button>
-            {/* 唯一的 Compare 入口。没有任何产品打过分之前只对房主可见 ——
-                她才能贴转录、发起打分；一旦有分了，谁都能看。 */}
-            {state && (hasAnyCompareResult || isHost) && (
-              <button className="small ghost" onClick={() => setCompareOpen(true)}>
-                {hasAnyCompareResult ? 'View the result' : 'Upload the result'}
+            {/* Compare 入口。没有任何产品打过分之前只对房主和收音设备可见 ——
+                只有它们能贴转录、发起打分；一旦有分了，谁都能看。 */}
+            {state && (hasAnyCompareResult || canEditCompare) && (
+              <button
+                className="small ghost"
+                onClick={() => setCompareTab(hasAnyCompareResult ? 'result' : 'input')}
+              >
+                Compare
               </button>
             )}
+            {isHost && <RoomSwitcher currentRoomId={roomId} onSwitch={switchRoom} />}
           </div>
         </div>
 
@@ -161,7 +192,9 @@ export default function RoomPage() {
           </span>
           {state && (
             <span className={`pill ${myLineCount > 0 ? 'ok' : ''}`}>
-              {myLineCount > 0
+              {isCaptureDevice
+                ? 'capture device'
+                : myLineCount > 0
                 ? `this device reads ${myLineCount} line${myLineCount === 1 ? '' : 's'}`
                 : isAmbienceDevice
                   ? 'ambience only'
@@ -225,6 +258,20 @@ export default function RoomPage() {
         </div>
       )}
 
+      {state && (
+        <CompareStatus
+          meta={meta}
+          comparisons={state.comparisons}
+          onOpen={
+            canEditCompare
+              ? () => setCompareTab('input')
+              : hasAnyCompareResult
+                ? () => setCompareTab('result')
+                : undefined
+          }
+        />
+      )}
+
       {!state ? (
         <div className="card">
           <p className="muted">Loading room…</p>
@@ -252,6 +299,7 @@ export default function RoomPage() {
               onAutoAssign={actions.autoAssign}
               onRename={actions.renameDevice}
               onSetAmbienceDevice={(id) => actions.updateSettings({ ambienceDevice: id })}
+              onSetCapture={actions.setCapture}
             />
           </div>
           <div>
@@ -287,6 +335,7 @@ export default function RoomPage() {
               onAutoAssign={actions.autoAssign}
               onRename={actions.renameDevice}
               onSetAmbienceDevice={(id) => actions.updateSettings({ ambienceDevice: id })}
+              onSetCapture={actions.setCapture}
             />
             <ScriptView
               lines={lines}
@@ -308,6 +357,7 @@ export default function RoomPage() {
               elapsedMs={elapsedMs}
               overlaps={overlaps}
               prepareRemaining={prepareRemaining}
+              waitingAmbience={waitingAmbience}
               myDeviceId={deviceId}
               onStart={actions.start}
               onStop={actions.stop}
@@ -324,17 +374,20 @@ export default function RoomPage() {
         </div>
       )}
 
-      {compareOpen && state && (
+      {compareTab && state && (
         <CompareModal
+          // 换房间时重新挂载，草稿不能带到别的房间
+          key={roomId}
           meta={meta}
-          isHost={isHost}
+          canEdit={canEditCompare}
           comparisons={state.comparisons}
           referenceLineCount={state.lineCount}
           glossary={state.settings.glossary}
+          initialTab={compareTab}
           onPut={actions.putComparison}
           onScore={actions.scoreComparison}
           onGlossary={actions.setGlossary}
-          onClose={() => setCompareOpen(false)}
+          onClose={() => setCompareTab(null)}
         />
       )}
 

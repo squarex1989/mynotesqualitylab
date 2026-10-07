@@ -12,6 +12,8 @@ interface Props {
   elapsedMs: number;
   overlaps: number;
   prepareRemaining: number;
+  /** Everyone has preloaded; waiting for the ambience device to report YouTube is audible */
+  waitingAmbience?: boolean;
   myDeviceId: string;
   onStart: () => void;
   onStop: () => void;
@@ -32,6 +34,7 @@ export function StagePanel({
   elapsedMs,
   overlaps,
   prepareRemaining,
+  waitingAmbience,
   myDeviceId,
   onStart,
   onStop,
@@ -131,7 +134,9 @@ export function StagePanel({
       {phase === 'preparing' && (
         <div className="stack">
           <span className="pill on">
-            Devices preloading…{prepareRemaining ? ` ${prepareRemaining} to go` : ''}
+            {waitingAmbience
+              ? 'Starting the ambience — readers begin once it is audible…'
+              : `Devices preloading…${prepareRemaining ? ` ${prepareRemaining} to go` : ''}`}
           </span>
           {isHost && (
             <button className="danger" onClick={onStop}>

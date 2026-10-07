@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS rooms (
   ambience_volume INTEGER NOT NULL DEFAULT 10,
   ambience_device TEXT,
   tts_model     TEXT,                            -- 每个房间可以自己选免费/付费模型
-  capture_device TEXT,                           -- 已废弃：收音设备概念去掉了，列留着不再读写
+  capture_device TEXT,                           -- 已废弃：收音设备改成按设备记（devices.capture），列留着不再读写
   glossary      TEXT,                            -- 人名/产品名，每行一个；打分时按关键词加权
   gap_ms        INTEGER NOT NULL DEFAULT 450,
   chaos_period_ms INTEGER NOT NULL DEFAULT 20000,
@@ -101,7 +101,8 @@ CREATE TABLE IF NOT EXISTS audio (
 CREATE TABLE IF NOT EXISTS comparisons (
   room_id     TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   product     TEXT NOT NULL,          -- my-notes | granola | otter
-  transcript  TEXT NOT NULL,          -- 该产品录出来的文本
+  transcript  TEXT NOT NULL,          -- 该产品录出来的文本（可以是空串：只贴了 summary）
+  summary     TEXT,                   -- 该产品生成的会议摘要；评估逻辑后补
   result      TEXT,                   -- JSON：两个裁判各自的分数和简报
   state       TEXT NOT NULL DEFAULT 'idle',  -- idle | scoring | done | failed
   error       TEXT,
@@ -114,6 +115,7 @@ CREATE TABLE IF NOT EXISTS devices (
   room_id    TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   name       TEXT NOT NULL,
   is_host    INTEGER NOT NULL DEFAULT 0,
+  capture    INTEGER NOT NULL DEFAULT 0,   -- 1 = 收音设备：只负责录、贴转录，绝不分配台词
   online     INTEGER NOT NULL DEFAULT 0,
   last_seen  INTEGER NOT NULL,
   PRIMARY KEY (room_id, id)
@@ -138,6 +140,8 @@ addColumnIfMissing('rooms', 'ambience_url_airport', 'TEXT');
 addColumnIfMissing('speakers', 'volume', 'INTEGER NOT NULL DEFAULT 100');
 addColumnIfMissing('rooms', 'capture_device', 'TEXT');
 addColumnIfMissing('rooms', 'glossary', 'TEXT');
+addColumnIfMissing('devices', 'capture', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('comparisons', 'summary', 'TEXT');
 
 // 场景默认音源。放在这一层是为了让下面的回填和 createRoom 用同一份值。
 export const AMBIENCE_DEFAULTS = {

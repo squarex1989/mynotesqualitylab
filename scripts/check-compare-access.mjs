@@ -3,12 +3,11 @@
 //
 // 跑法：node scripts/check-compare-access.mjs
 //
-// 收音设备的概念已经去掉了：现在谁都能看到 Compare 的结果（走 state 广播，没有
-// 任何按角色的读取限制），但只有房主能贴转录、改 glossary、发起打分 —— 写操作
+// 谁都能看到 Compare 的结果（走 state 广播，没有任何按角色的读取限制），但只有
+// 房主（和收音设备，见 check-batch.mjs）能贴转录、改 glossary、发起打分 —— 写操作
 // 全部收在服务端的 compareOnly() 里，不能靠客户端隐藏几个按钮就当作权限控制。
 //
-// 顺带确认收音设备真的从分配逻辑里消失了：assignSpeaker 不再因为「这是收音设备」
-// 拒绝任何设备，autoAssignDevices 也不再排除它。
+// 这里的 guest 是普通朗读设备：它的写操作必须被拒，而且它照常分到台词。
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -126,14 +125,14 @@ t('★ guest 不用刷新也看到了同一份转录',
   guestRow()?.transcript === 'host pasted this transcript', JSON.stringify(guestRow()));
 
 // ---------------------------------------------------------------- 4
-console.log('\n4) 收音设备的概念已经从分配逻辑里去掉了');
+console.log('\n4) 普通设备照常分到台词');
 const devices = getDevices(roomId);
 t('两台设备都在场', devices.length === 2, `${devices.length}`);
 // autoAssignDevices 在两台设备都上线、且台词还没分配时已经跑过一次
 // （连接时"第一台进来的设备如果还没人分到角色，顺手分一下"）——
 // 两个 speaker 应该都已经被分给了在线设备中的某一个，没有谁被排除在外
 const speakers = getSpeakers(roomId);
-t('两个 speaker 都分到了某台设备（没有谁被当成"收音设备"排除）',
+t('两个 speaker 都分到了某台设备',
   speakers.every((s) => s.device_id), JSON.stringify(speakers.map((s) => s.device_id)));
 t('分配到的设备确实是这两台里的（不是别的幽灵设备）',
   speakers.every((s) => devices.some((d) => d.id === s.device_id)));

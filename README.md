@@ -91,13 +91,22 @@ npm run dev
 
 ### 转录对比
 
-顶部随时有个 **Compare** 入口，谁都能点开看结果 —— 不需要指定哪台设备来做这件事
-（不再有「收音设备」这个角色）。区别在权限：**只有房主能贴/改某个产品的转录、
-编 glossary、点 Score**；其他人打开看到的是同一份结果，输入框是只读的。写操作
-的权限检查在服务端（`compareOnly()`），不是靠前端隐藏几个按钮撑着。
+顶部有个 **Compare** 入口，下面是一条状态栏：My Notes / Granola / Otter 三个产品 ×
+transcript / summary，贴了的是绿点、没贴的是灰点，点状态栏直接打开 Compare。
 
-打开后是 My Notes / Granola / Otter 三栏，每栏可以选文件或直接粘贴该产品录出来的
-转录，然后逐个 Score。**房间里那份原始 transcript 是唯一真值**，三家各自和它比对。
+Compare 弹窗分两个 tab：
+
+- **Input** —— 每个产品一张卡，左边 transcript、右边 summary，可以粘贴也可以上传文件；
+  卡片右上角 **Score / Re-score** 给这个产品的转录打分（有没保存的改动会先存再打分）。
+  glossary 也在这一页。
+- **Result** —— 打分结果（Ranking 表 + 每个产品的详细证据）。summary 的评估逻辑还没做，
+  先占着位置，只显示贴没贴。
+
+权限：**房主和收音设备能贴/改转录和摘要、编 glossary、点 Score**；其他人只能看
+Result。写操作的权限检查在服务端（`compareOnly()`），不是靠前端隐藏几个按钮撑着。
+只改摘要不会清掉转录的分数；改了转录，那个产品的旧分数会自动作废。
+
+**房间里那份原始 transcript 是唯一真值**，三家各自和它比对。
 
 大部分指标是 code 算出来的（编辑距离），不经过模型：
 
@@ -241,6 +250,54 @@ SRT / VTT 字幕和 `[{"speaker":"A","content":"..."}]` 这种 JSON 也认。时
 
 ---
 
+### 批量导入
+
+首页 **Import transcript files** 一次最多选 100 个文件，每个文件建一个房间（只配置，
+不合成音频；进房间后随便改）。配置按文件里的要求来，优先级从高到低：
+
+1. 文件开头的要求头 —— front matter 或者若干行 `Key: value`，中英文键名都认：
+
+   ```
+   ---
+   Title: Weekly sync                                   # 标题 / 主题
+   Speakers: Alice (Indian accent, female), Bob, Carol  # 人数 / 参与者（括号里写口音、性别）
+   Accent: British                                      # 口音；也可以写 Alice: Indian, Bob: British
+   Language: en                                         # 语言（不写就按内容猜）
+   Order: chaotic                                       # 顺序：有序 / 无序
+   Noise: cafe                                          # 环境：安静 / 咖啡厅 / 机场
+   Glossary: Acme, Quicksilver                          # 术语
+   Pace: fast                                           # 语速
+   ---
+   Alice: Let's start with last week's numbers.
+   ```
+
+2. 台词里名字后面的括号备注：`Alice (Indian accent): ...`
+3. 文件名：`07_chaotic_cafe_indian-accent.txt` 也能读出无序 + 咖啡厅 + 印度口音
+
+没指名道姓的口音按顺序分给前几个说话人，其余说话人用该语种的无口音音色，同一房间里
+尽量不重复。房间名自动生成成 `标题 | EN·3p·Indian·Chaos·Cafe` 这种（标题没写就用文件名；
+有序、安静是默认值，不写进名字）。
+
+### 设备角色
+
+设备面板里每台设备是三种角色之一：
+
+- **朗读设备**（默认）—— 按角色数分到台词。设备一进房间就自动分配：新设备从最忙的
+  设备那里接过角色；设备比角色多时，有的设备一个角色都没有。房主随时可以手动改。
+- **环境音设备** —— 放 YouTube 环境音，也可以同时念台词（自动分配时尽量用别的设备）。
+  环境音从第 20 秒开始放（链接里写了 `?t=` 就按链接的）；开播时先让 YouTube 出声，
+  环境音设备报告「出声了」之后朗读设备才开始念，10 秒没回音就照常开始。
+- **收音设备** —— 跑 My Notes / Granola / Otter 录音的那台，绝不念台词。被设成收音设备
+  的那一刻会直接弹出 Compare 并停在 Input，等着贴转录和摘要。
+
+### 在房间之间切换
+
+房主在房间顶部的 **Switch room…** 里选一个自己的房间，会问一句「是否让同一房间的设备
+自动跟随进入新房间」。选是，这个房间里所有在线的设备会一起跳过去：收音设备、环境音
+设备角色不变，朗读设备按新房间的角色数重新分配（角色少于设备时有的设备没有台词）。
+
+---
+
 ## 几个设计上的选择
 
 **为什么用 msgpack 而不是 JSON** —— Fish 官方 SDK 发的是 `Content-Type: application/msgpack`，
@@ -354,8 +411,9 @@ server/
   tts.js               Fish API 调用（msgpack）、内容寻址缓存、时长探测、限流重试
   generate.js          房间级的批量合成任务（限并发、推进度、跑完再扫一遍）
   schedule.js          把台词排成带绝对偏移的时间线（有序 / 抢话 / 压音量）
-  rooms.js             房间、角色、设备、分配、设置的读写
-  api.js               HTTP 接口（建房、上传、音频文件）
+  rooms.js             房间、角色、设备（朗读 / 环境音 / 收音）、分配、换房间、设置的读写
+  importer.js          批量导入：读文件里的要求，挑口音音色、配房间、自动命名
+  api.js               HTTP 接口（建房、批量导入、上传、音频文件）
   realtime.js          Socket.IO：实时状态、房主操作、开播握手
 lib/                   前端：socket hook、Web Audio 引擎、时钟同步、YouTube 环境音
 components/            上传器、角色卡、设备面板、基调设置、台词、开场面板
@@ -363,4 +421,5 @@ scripts/
   mock-tts.js          本地假 Fish（msgpack + mp3），不花额度跑通链路
   fetch-fish-voices.mjs  从 fish.audio 公开库拉音色表
   check-fish.mjs       对着真实 API 自检
+  check-batch.mjs      批量导入、自动分配、收音设备、换房间跟随、环境音先出声的断言
 ```

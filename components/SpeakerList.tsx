@@ -219,7 +219,8 @@ function SpeakerCard({
                 onChange={(e) => onAssign(speaker.name, e.target.value || null)}
               >
                 <option value="">(unassigned)</option>
-                {devices.map((d) => (
+                {/* 收音设备绝不念台词，不出现在这里 */}
+                {devices.filter((d) => !d.capture).map((d) => (
                   <option key={d.id} value={d.id}>
                     {d.name}
                     {d.online ? '' : ' (offline)'}
