@@ -163,6 +163,22 @@ addColumnIfMissing('comparisons', 'summary', 'TEXT');
 addColumnIfMissing('rooms', 'owner_id', 'TEXT'); // 建房的账号；老房间为空，登录后用本机的 host token 认领
 db.exec('CREATE INDEX IF NOT EXISTS idx_rooms_owner ON rooms(owner_id)');
 
+// 脚本模式（导入 script.json 的房间）：每句话什么时候开口由脚本里的 timing 决定，
+// 不再走房间级的「定时抢话」。见 server/script.js。
+addColumnIfMissing('rooms', 'script_mode', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('rooms', 'script_meta', 'TEXT'); // script.json 的 meta + speakers，原样留存
+addColumnIfMissing('rooms', 'answer_key', 'TEXT'); // answer_key.json，给以后的 summary 评估用
+addColumnIfMissing('rooms', 'last_timeline', 'TEXT'); // 最近一次开播的实际时间线（GT 时间戳的来源）
+addColumnIfMissing('lines', 'uid', 'TEXT'); // 脚本里的 utterance id（u0001），timing.ref 指向它
+addColumnIfMissing('lines', 'kind', "TEXT NOT NULL DEFAULT 'speech'"); // speech | backchannel | nonspeech
+addColumnIfMissing('lines', 'tts_text', 'TEXT'); // 送给 TTS 的文本；空则用 content
+addColumnIfMissing('lines', 'tts_continuation', 'TEXT'); // 被打断的句子：只合成、不播放的后半句
+addColumnIfMissing('lines', 'timing', 'TEXT'); // JSON：{mode:'after'|'during', ref, gap_ms | at_text, delay_ms}
+addColumnIfMissing('lines', 'cut_off', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('lines', 'clean', 'TEXT'); // 去掉填充词、重复后的参考文本
+// Fish 返回的逐词时间戳（JSON）。NULL = 没要过；{"unavailable":true} = 要过但接口没给
+addColumnIfMissing('audio', 'alignment', 'TEXT');
+
 // 场景默认音源。放在这一层是为了让下面的回填和 createRoom 用同一份值。
 export const AMBIENCE_DEFAULTS = {
   cafe: 'https://www.youtube.com/watch?v=jfzqpz3h0zU',

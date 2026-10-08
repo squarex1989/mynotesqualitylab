@@ -16,6 +16,9 @@
 //
 // 读不出来的一律用房间默认值（有序、安静、按内容猜语种），用户之后可以在房间里改。
 // 这里只配置、不合成音频 —— 合成仍然要房主在房间里手动点。
+//
+// script.json（《会议脚本重写规范》）是另一条路：配置全在 JSON 的 meta / speakers 里，
+// 不看要求头和文件名；同名的 answer_key.json 跟着一起导入（见 planScript）。
 
 import path from 'node:path';
 import { parseTranscript } from './parse.js';
@@ -411,11 +414,129 @@ export function composeTitle(base, { language, speakerCount, accents, orderMode,
 }
 
 /* ------------------------------------------------------------------ */
+/* script.json                                                          */
+/* ------------------------------------------------------------------ */
+
+// 外语口音：说英语的人母语是什么 / 说话人的 locale → 音色库 accents 里的子串
+const L1_ACCENT = { zh: 'chinese', ja: 'japanese', hi: 'indian', de: 'german' };
+const LOCALE_ACCENT = { 'en-in': 'indian', 'en-gb': 'british' };
+// 这些类型的实体是名字和术语，进 glossary（打分时按关键词加权）；数字有单独的检查
+const GLOSSARY_TYPES = new Set(['person', 'product', 'org', 'term', 'event']);
+
+const baseLang = (code) => String(code || '').split(/[-_]/)[0].toLowerCase();
+
+/** answer_key.json 的文本 → 对象；坏了就返回 null 并记一条警告 */
+function readAnswerKey(raw, warnings) {
+  if (raw == null || raw === '') return null;
+  if (typeof raw === 'object') return raw;
+  try {
+    const obj = JSON.parse(String(raw));
+    if (obj && typeof obj === 'object' && !Array.isArray(obj)) return obj;
+  } catch {
+    /* 落到下面 */
+  }
+  warnings.push('The paired answer_key.json is not valid JSON — imported without it');
+  return null;
+}
+
+/**
+ * script.json 的房间配置：语言、音色、有序/无序、环境音、glossary、房间名。
+ * parsed 是 parseScript 的结果。批量导入和房间里直接上传 script.json 都用它。
+ */
+export function planScript(parsed, { name = '' } = {}) {
+  const { meta = {}, speakers: rawSpeakers = [], speakerNames = {} } = parsed.script;
+  const warnings = [...parsed.warnings];
+  const answerKey = parsed.script.answerKey ?? null;
+
+  const declared = baseLang(meta.language);
+  const language = LANGUAGE_NAMES.some(([code]) => code === declared)
+    ? declared
+    : detectLanguage(parsed.lines.map((l) => l.content).join('\n'));
+
+  // 说话人提示：性别来自 voice.gender，口音来自 locale（en-IN / en-GB）或母语（说英语的中国人）
+  const hints = {};
+  for (const s of rawSpeakers) {
+    const who = speakerNames[String(s?.id)];
+    if (!who) continue;
+    const gender = /^(male|female)$/i.test(s.voice?.gender || '') ? s.voice.gender.toLowerCase() : null;
+    const l1 = baseLang(s.l1);
+    const accent =
+      LOCALE_ACCENT[String(s.voice?.locale || '').toLowerCase()] ||
+      (l1 && l1 !== language ? L1_ACCENT[l1] : null) ||
+      null;
+    hints[who] = { gender, accent };
+  }
+  const voicePlan = planVoices(parsed.speakers, { language, hints, accents: [] });
+  const accentsUsed = Object.values(hints).map((h) => h.accent).filter(Boolean);
+
+  const style = String(meta.style || '').toLowerCase();
+  const env = String(meta.environment || '').toLowerCase();
+  const settings = {
+    orderMode: style === 'chaotic' ? 'chaotic' : 'ordered', // 只是标签：脚本房间的开口时机来自 timing
+    noiseMode: /cafe|airport/.test(env) ? 'noisy' : 'quiet',
+    ambienceKind: env.includes('airport') ? 'airport' : 'cafe',
+  };
+
+  const glossary = [];
+  for (const e of Array.isArray(answerKey?.entities) ? answerKey.entities : []) {
+    if (!GLOSSARY_TYPES.has(String(e?.type))) continue;
+    for (const term of [e.canonical, ...(Array.isArray(e.forms) ? e.forms : []), ...(Array.isArray(e.spoken_forms) ? e.spoken_forms : [])]) {
+      const t = String(term ?? '').trim();
+      if (t && !glossary.includes(t)) glossary.push(t);
+    }
+  }
+
+  const wanted = Number(String(meta.source_file || name).match(/-(\d+)-Participants/i)?.[1]);
+  if (wanted && wanted !== parsed.speakers.length) {
+    warnings.push(`The file name says ${wanted} participants but the script has ${parsed.speakers.length} speakers`);
+  }
+  if (!answerKey) warnings.push('No answer_key.json was paired with this script');
+
+  const stem = path
+    .basename(String(name || ''))
+    .replace(/\.json$/i, '')
+    .replace(/\.script$/i, '');
+  const title = composeTitle(meta.title || stem, {
+    language,
+    speakerCount: parsed.speakers.length,
+    accents: accentsUsed,
+    ...settings,
+  });
+
+  return {
+    parsed,
+    title,
+    language,
+    settings,
+    pace: 'normal',
+    voicePlan,
+    accents: accentsUsed,
+    glossary: glossary.join('\n'),
+    warnings,
+    scriptMode: true,
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* 入口                                                                */
 /* ------------------------------------------------------------------ */
 
 /** 只做解析和规划，不落库 —— 测试和预览都用它 */
-export function planImport({ name, text }) {
+export function planImport({ name, text, answerKey = null }) {
+  // script.json：整份是一个 JSON 对象，配置都在里面
+  const trimmed = String(text || '').trim();
+  if (trimmed.startsWith('{')) {
+    const asScript = parseTranscript(trimmed);
+    if (asScript.format === 'script') {
+      if (!asScript.lines.length) throw new Error(asScript.warnings[0] || 'The script has no utterances');
+      if (answerKey != null) {
+        const key = readAnswerKey(answerKey, asScript.warnings);
+        if (key) asScript.script.answerKey = key;
+      }
+      return planScript(asScript, { name });
+    }
+  }
+
   const stem = path.basename(String(name || ''), path.extname(String(name || ''))).trim();
   const { meta, body } = extractHeader(text);
   const parsed = parseTranscript(body, { mergeConsecutive: true });
@@ -482,8 +603,8 @@ export function planImport({ name, text }) {
 }
 
 /** 建房间 + 写 transcript + 应用配置。失败时把半成品房间删掉。 */
-export function importTranscript({ name, text }, { ownerId = null } = {}) {
-  const plan = planImport({ name, text });
+export function importTranscript({ name, text, answerKey = null }, { ownerId = null } = {}) {
+  const plan = planImport({ name, text, answerKey });
   const { id, hostToken } = createRoom({ title: plan.title, ownerId });
   try {
     setTranscript(id, plan.parsed, { voices: plan.voicePlan, config: { pace: plan.pace } });
@@ -505,5 +626,7 @@ export function importTranscript({ name, text }, { ownerId = null } = {}) {
     settings: plan.settings,
     accents: plan.accents,
     warnings: plan.warnings,
+    scriptMode: Boolean(plan.scriptMode),
+    hasAnswerKey: Boolean(plan.parsed.script?.answerKey),
   };
 }

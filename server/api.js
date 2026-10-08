@@ -17,9 +17,16 @@ import {
   deleteRoom,
   roomSummaries,
   TITLE_MAX_WEIGHT,
+  updateRoomSettings,
+  setGlossary,
+  getAnswerKey,
+  getSavedTimeline,
+  generationProgress,
+  lineTargets,
+  getSpeakers,
 } from './rooms.js';
 import { jobStatus } from './generate.js';
-import { apiKeyProblem, TTS_MODELS, DEFAULT_TTS_MODEL } from './tts.js';
+import { apiKeyProblem, TTS_MODELS, DEFAULT_TTS_MODEL, lookupAudio, parseAlignment } from './tts.js';
 import {
   PRODUCTS,
   QUESTIONS as JUDGE_QUESTIONS,
@@ -27,7 +34,9 @@ import {
   apiKeyProblem as judgeKeyProblem,
 } from './judge.js';
 import { UER_MODEL } from './uer.js';
-import { importTranscript, MAX_IMPORT_FILES, MAX_IMPORT_FILE_BYTES } from './importer.js';
+import { importTranscript, planScript, MAX_IMPORT_FILES, MAX_IMPORT_FILE_BYTES } from './importer.js';
+import { buildSchedule } from './schedule.js';
+import { timelineRows, timelineText, timelineRttm } from './script.js';
 
 const HASH_RE = /^[a-f0-9]{32}$/;
 
@@ -102,11 +111,13 @@ export function createApiRouter({ broadcast }) {
     const results = files.map((f) => {
       const name = String(f?.name || 'transcript.txt').slice(0, 200);
       const text = String(f?.text ?? '');
-      if (Buffer.byteLength(text) > MAX_IMPORT_FILE_BYTES) {
+      // script.json 的同名 answer_key.json，前端配好对一起发过来
+      const answerKey = f?.answerKey == null ? null : String(f.answerKey);
+      if (Buffer.byteLength(text) + Buffer.byteLength(answerKey ?? '') > MAX_IMPORT_FILE_BYTES) {
         return { file: name, ok: false, error: 'File is over 4MB' };
       }
       try {
-        return importTranscript({ name, text }, { ownerId: req.user?.id ?? null });
+        return importTranscript({ name, text, answerKey }, { ownerId: req.user?.id ?? null });
       } catch (err) {
         return { file: name, ok: false, error: err.message || String(err) };
       }
@@ -169,7 +180,15 @@ export function createApiRouter({ broadcast }) {
     }
 
     try {
-      setTranscript(req.room.id, parsed);
+      if (parsed.format === 'script') {
+        // 直接贴 script.json：音色、有序/无序、环境音、glossary 按脚本里的 meta 配
+        const plan = planScript(parsed);
+        setTranscript(req.room.id, parsed, { voices: plan.voicePlan });
+        updateRoomSettings(req.room.id, plan.settings);
+        if (plan.glossary) setGlossary(req.room.id, plan.glossary);
+      } else {
+        setTranscript(req.room.id, parsed);
+      }
     } catch (err) {
       return res.status(400).json({ error: err.message });
     }
@@ -183,6 +202,54 @@ export function createApiRouter({ broadcast }) {
       lineCount: parsed.lines.length,
       speakers: parsed.speakers,
       warnings: parsed.warnings,
+    });
+  });
+
+  // script.json 附带的 answer key（summary 评估的真值）
+  router.get('/rooms/:id/answer-key', requireRoom, (req, res) => {
+    const key = getAnswerKey(req.room.id);
+    if (!key) return res.status(404).json({ error: 'This room has no answer key' });
+    res.json(key);
+  });
+
+  // 带真实时间戳的参考转写。以最近一次实际开播的时间线为准；还没播过、但音频都合成好了，
+  // 就现排一份（脚本房间的排期是确定的，普通无序房间的抢话每次随机，所以标 played:false）。
+  //   ?format=json（默认）| txt（[mm:ss.s] 说话人: 原文）| rttm（说话人分离 GT，算 DER 用）
+  router.get('/rooms/:id/timeline', requireRoom, (req, res) => {
+    const room = req.room;
+    const lines = getLines(room.id);
+    const saved = getSavedTimeline(room.id);
+    let items = saved?.items;
+    let played = Boolean(items?.length);
+    if (!played) {
+      const progress = generationProgress(room.id);
+      if (!progress.total || progress.ready < progress.total) {
+        return res.status(409).json({ error: 'Not played yet, and not all audio is synthesized' });
+      }
+      const audioMap = new Map();
+      for (const t of lineTargets(room.id)) {
+        const row = t.hash ? lookupAudio(t.hash) : null;
+        if (row) audioMap.set(t.idx, { hash: t.hash, durationMs: row.duration_ms, alignment: parseAlignment(row.alignment) });
+      }
+      const speakerMap = new Map(getSpeakers(room.id).map((s) => [s.name, s]));
+      items = buildSchedule(room, lines, speakerMap, audioMap, room.host_device).items;
+    }
+    const alignmentByHash = new Map(items.map((i) => [i.hash, parseAlignment(lookupAudio(i.hash)?.alignment)]));
+    const rows = timelineRows(items, new Map(lines.map((l) => [l.idx, l])), alignmentByHash);
+
+    const format = String(req.query.format || 'json');
+    if (format === 'txt' || format === 'rttm') {
+      res.type('text/plain; charset=utf-8');
+      return res.send(format === 'txt' ? timelineText(rows) : timelineRttm(rows, room.id));
+    }
+    res.json({
+      roomId: room.id,
+      title: room.title,
+      scriptMode: Boolean(room.script_mode),
+      played,
+      startedAt: saved?.startedAt ?? null,
+      fromIdx: saved?.fromIdx ?? null,
+      lines: rows,
     });
   });
 

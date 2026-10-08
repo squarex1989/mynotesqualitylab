@@ -6,7 +6,45 @@ import { setHostToken } from '@/lib/identity';
 import type { ImportResult } from '@/lib/types';
 
 const MAX_FILES = 100;
+// script.json 和它的 answer_key.json 算一场会：最多 100 场，也就是最多 200 个文件
+const MAX_PICK = MAX_FILES * 2;
 const MAX_FILE_BYTES = 4 * 1024 * 1024;
+
+const SCRIPT_RE = /\.script\.json$/i;
+const ANSWER_RE = /\.answer_key\.json$/i;
+const stemOf = (name: string, re: RegExp) => name.replace(re, '');
+
+type Upload = { name: string; text: string; answerKey?: string };
+
+/**
+ * 把同名的 X.script.json 和 X.answer_key.json 配成一对，作为一个导入项发出去。
+ * 分批是按体积切的，不先配对的话一对文件可能被切到两个请求里。
+ */
+async function pairFiles(files: File[], skipped: ImportResult[]) {
+  const answers = new Map<string, File>();
+  for (const f of files) if (ANSWER_RE.test(f.name)) answers.set(stemOf(f.name, ANSWER_RE), f);
+  const used = new Set<string>();
+  const uploads: { upload: Upload; size: number }[] = [];
+  for (const f of files) {
+    if (ANSWER_RE.test(f.name)) continue;
+    const upload: Upload = { name: f.name, text: await f.text() };
+    let size = f.size;
+    if (SCRIPT_RE.test(f.name)) {
+      const stem = stemOf(f.name, SCRIPT_RE);
+      const key = answers.get(stem);
+      if (key) {
+        upload.answerKey = await key.text();
+        size += key.size;
+        used.add(stem);
+      }
+    }
+    uploads.push({ upload, size });
+  }
+  for (const [stem, f] of answers) {
+    if (!used.has(stem)) skipped.push({ file: f.name, ok: false, error: `No matching ${stem}.script.json` });
+  }
+  return uploads;
+}
 // 一次请求的总体积上限。服务端 JSON 上限是 12MB，留点余量
 const MAX_BATCH_BYTES = 8 * 1024 * 1024;
 
@@ -25,28 +63,33 @@ export function BatchImport({ onImported }: { onImported: () => void }) {
     setResults([]);
     const picked = Array.from(list);
     const skipped: ImportResult[] = [];
-    if (picked.length > MAX_FILES) {
-      setError(`You picked ${picked.length} files — only the first ${MAX_FILES} are imported`);
+    if (picked.length > MAX_PICK) {
+      setError(`You picked ${picked.length} files — only the first ${MAX_PICK} are read`);
     }
-    const files = picked.slice(0, MAX_FILES).filter((f) => {
+    const sized = picked.slice(0, MAX_PICK).filter((f) => {
       if (f.size <= MAX_FILE_BYTES) return true;
       skipped.push({ file: f.name, ok: false, error: 'File is over 4MB' });
       return false;
     });
+    let uploads = await pairFiles(sized, skipped);
+    if (uploads.length > MAX_FILES) {
+      setError(`That is ${uploads.length} meetings — only the first ${MAX_FILES} are imported`);
+      uploads = uploads.slice(0, MAX_FILES);
+    }
+    const files = uploads;
 
     // 按体积分批发，免得一个请求撑爆服务端的 JSON 上限
-    const batches: { name: string; text: string }[][] = [];
-    let current: { name: string; text: string }[] = [];
+    const batches: Upload[][] = [];
+    let current: Upload[] = [];
     let size = 0;
-    for (const f of files) {
-      const text = await f.text();
-      if (current.length && size + f.size > MAX_BATCH_BYTES) {
+    for (const { upload, size: n } of uploads) {
+      if (current.length && size + n > MAX_BATCH_BYTES) {
         batches.push(current);
         current = [];
         size = 0;
       }
-      current.push({ name: f.name, text });
-      size += f.size;
+      current.push(upload);
+      size += n;
     }
     if (current.length) batches.push(current);
 
@@ -89,14 +132,15 @@ export function BatchImport({ onImported }: { onImported: () => void }) {
         Pick up to {MAX_FILES} files — each becomes its own room. Name each file{' '}
         <strong>language + topic + speaker count + orderly / chaotic</strong>, e.g.{' '}
         <code>英文_产品评审_3人_有序.txt</code> or <code>EN-Weekly sync-4p-chaotic.txt</code>; the
-        room is named and configured from that. No audio is synthesized; change anything later
-        inside the room.
+        room is named and configured from that. <code>X.script.json</code> files are configured from
+        the script itself, and a matching <code>X.answer_key.json</code> picked along with it is
+        imported into the same room. No audio is synthesized; change anything later inside the room.
       </p>
       <input
         ref={fileRef}
         type="file"
         multiple
-        accept=".txt,.md,.vtt,.srt,.json,text/plain"
+        accept=".txt,.md,.vtt,.srt,.json,text/plain,application/json"
         style={{ display: 'none' }}
         onChange={(e) => {
           if (e.target.files?.length) void run(e.target.files);
@@ -125,6 +169,7 @@ export function BatchImport({ onImported }: { onImported: () => void }) {
                     <span className="muted">
                       {' '}
                       — {r.file} · {r.lineCount} lines
+                      {r.scriptMode && (r.hasAnswerKey ? ' · script + answer key' : ' · script')}
                     </span>
                     {r.warnings?.map((w) => (
                       <div key={w} style={{ color: 'var(--accent)' }}>

@@ -1,5 +1,10 @@
 // 把 lines + 音频时长 + 房间基调，排成一条带绝对偏移量的时间线。
 // 所有设备拿到同一份 schedule，各自只播 deviceId 等于自己的那些条目。
+//
+// 导入 script.json 的房间（room.script_mode）走 server/script.js 里的排期：
+// 开口时机由脚本的 timing 决定，下面的「定时抢话」和「省略号插话」都不参与。
+
+import { buildScriptSchedule } from './script.js';
 
 const MIN_OVERLAP_MS = 400;
 
@@ -14,10 +19,12 @@ const CUT_IN_MS = 800;
  * @param {object} room      rooms 表的一行
  * @param {Array}  lines     [{idx, speaker, content}]
  * @param {Map}    speakerMap speaker -> {voice, instructions, device_id, volume}
- * @param {Map}    audioMap  idx -> {hash, durationMs}
+ * @param {Map}    audioMap  idx -> {hash, durationMs, alignment?}
  * @param {string} fallbackDevice 没分配设备的角色兜底到谁（host）
  */
 export function buildSchedule(room, lines, speakerMap, audioMap, fallbackDevice) {
+  if (room.script_mode) return buildScriptSchedule(room, lines, speakerMap, audioMap, fallbackDevice);
+
   const chaotic = room.order_mode === 'chaotic';
   const gap = room.gap_ms ?? 450;
   const period = room.chaos_period_ms ?? 20000;

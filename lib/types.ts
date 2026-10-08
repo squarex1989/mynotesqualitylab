@@ -295,6 +295,10 @@ export interface RoomState {
   comparisons: Comparison[];
   /** Paused on this line (idx); resuming starts from the beginning of it */
   pausedIdx?: number | null;
+  /** Imported from script.json: when each line starts comes from the script, not orderly/chaotic */
+  scriptMode?: boolean;
+  /** script.json came with an answer_key.json */
+  hasAnswerKey?: boolean;
 }
 
 export interface Progress {
@@ -308,7 +312,13 @@ export interface Progress {
 export interface Line {
   idx: number;
   speaker: string;
+  /** The reference text (ground truth). Empty for non-speech sounds */
   content: string;
+  /** script.json only: utterance id, kind, and what is actually sent to TTS */
+  uid?: string | null;
+  kind?: 'speech' | 'backchannel' | 'nonspeech';
+  tts_text?: string | null;
+  cut_off?: number;
 }
 
 export interface ScheduleItem {
@@ -323,6 +333,16 @@ export interface ScheduleItem {
   duckGain: number;
   /** 0–1 playback gain for this speaker */
   volume: number;
+  /** script.json only */
+  uid?: string | null;
+  kind?: 'speech' | 'backchannel' | 'nonspeech';
+  /** Interrupted line: stop the clip this many ms in (the rest is the unplayed continuation) */
+  stopAtMs?: number | null;
+  /** Fade-out length before stopAtMs */
+  fadeMs?: number | null;
+  /** Where speech starts / ends inside the clip (from Fish word timestamps) */
+  speechStartMs?: number;
+  speechEndMs?: number;
 }
 
 export interface AmbienceConfig {
@@ -365,4 +385,7 @@ export interface ImportResult {
   settings?: { orderMode: string; noiseMode: string; ambienceKind: string };
   accents?: string[];
   warnings?: string[];
+  /** Imported from script.json */
+  scriptMode?: boolean;
+  hasAnswerKey?: boolean;
 }

@@ -9,6 +9,8 @@ interface Props {
   devices: Device[];
   meta: Meta | null;
   isHost: boolean;
+  /** Imported from script.json: line timing comes from the script, so the order knobs do nothing */
+  scriptMode?: boolean;
   onChange: (patch: Partial<RoomSettings>) => void;
 }
 
@@ -39,7 +41,7 @@ function Seg<T extends string>({
   );
 }
 
-export function ToneSettings({ settings, devices, meta, isHost, onChange }: Props) {
+export function ToneSettings({ settings, devices, meta, isHost, scriptMode, onChange }: Props) {
   // 每个场景各存一份链接，输入框编辑的是「当前选中场景」那一份。
   //
   // 这里刻意不用 useState(初始值) + useEffect 去同步：那种写法有一帧延迟，
@@ -62,6 +64,19 @@ export function ToneSettings({ settings, devices, meta, isHost, onChange }: Prop
       <h2>Room settings</h2>
 
       <div className="stack" style={{ gap: 16 }}>
+        {scriptMode ? (
+          <div>
+            <div className="spread">
+              <span>Reading order</span>
+              <span className="tiny muted">From the script</span>
+            </div>
+            <p className="tiny muted" style={{ margin: '4px 0 0' }}>
+              This room was imported from a script.json: pauses, cut-ins and backchannels follow the
+              timing written in the script, placed on Fish word timestamps. The orderly / chaotic
+              switch, gap and interruption timer don&apos;t apply.
+            </p>
+          </div>
+        ) : (
         <div>
           <div className="spread">
             <span>Reading order</span>
@@ -127,6 +142,7 @@ export function ToneSettings({ settings, devices, meta, isHost, onChange }: Prop
             )}
           </div>
         </div>
+        )}
 
         <div>
           <div className="spread">

@@ -362,6 +362,7 @@ export default function RoomPage() {
               devices={state.devices}
               meta={meta}
               isHost={isHost}
+              scriptMode={state.scriptMode}
               onChange={actions.updateSettings}
             />
           </div>
@@ -401,6 +402,7 @@ export default function RoomPage() {
               devices={state.devices}
               meta={meta}
               isHost={isHost}
+              scriptMode={state.scriptMode}
               onChange={actions.updateSettings}
             />
           </div>
@@ -410,6 +412,8 @@ export default function RoomPage() {
         <div className="grid">
           <div>
             <ScriptView
+              roomId={roomId}
+              hasAnswerKey={state.hasAnswerKey}
               lines={lines}
               progress={progress}
               schedule={schedule}

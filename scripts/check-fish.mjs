@@ -158,6 +158,48 @@ for (const n of [500, 800, 1200]) {
     : no(`${n} 字被拒`, `HTTP ${r.status} ${r.error}`);
 }
 
+/* 9. 带逐词时间戳的流式接口（脚本房间用）---------------------------- */
+// 脚本房间的「念到某几个字时插话」「被打断时在某个词后停下」全靠这份时间戳。
+// 要确认：免费模型能不能用、中文的「词」是什么粒度、[break] 会不会混进词里、
+// 快照是不是真的要「替换」（重复的词说明被当成追加了）。
+console.log('\n9) /v1/tts/stream/with-timestamp（脚本房间的逐词时间戳）');
+{
+  const { parseTimestampStream, alignmentFromSnapshots } = await import('../server/script.js');
+  for (const [label, text] of [
+    ['中文', '前台显示有货，然后仓里面[break]其实已经没了。'],
+    ['English', 'We should, um, [break] probably wait until Thursday.'],
+  ]) {
+    const res = await fetch(`${BASE}/v1/tts/stream/with-timestamp`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/msgpack', model: MODEL },
+      body: msgpackEncode({ text, format: 'mp3', mp3_bitrate: 128, normalize: true, latency: 'normal', chunk_length: 200 }),
+      signal: AbortSignal.timeout(120000),
+    });
+    if (!res.ok) {
+      no(`${label}：HTTP ${res.status}`, `${(await res.text().catch(() => '')).slice(0, 160)} → 脚本房间会退回普通接口，按字数估时间`);
+      continue;
+    }
+    const ct = res.headers.get('content-type') || '';
+    try {
+      const { buffer, snapshots } = parseTimestampStream(await res.text());
+      const a = alignmentFromSnapshots(snapshots, null);
+      if (!a) {
+        no(`${label}：有音频（${Math.round(buffer.length / 1024)}KB）但没有任何时间戳`, ct);
+        continue;
+      }
+      const words = a.words.map((w) => w.t);
+      const monotonic = a.words.every((w, i) => w.e >= w.s && (i === 0 || w.s >= a.words[i - 1].s));
+      const dup = words.some((w, i) => i > 0 && w === words[i - 1] && a.words[i].s === a.words[i - 1].s);
+      ok(`${label}：${a.words.length} 个词，开口 ${a.speechStartMs}ms，说完 ${a.speechEndMs}ms`, words.slice(0, 12).join(' | '));
+      monotonic ? ok(`${label}：时间单调`) : no(`${label}：时间不单调`);
+      dup ? no(`${label}：有重复的词`, '→ 快照可能被追加而不是替换') : ok(`${label}：没有重复的词（快照是替换）`);
+      words.some((w) => /break/i.test(w)) ? no(`${label}：[break] 混进了词里`, '→ 对齐时要额外剔掉') : ok(`${label}：[break] 没混进词里`);
+    } catch (err) {
+      no(`${label}：解析失败`, `${err.message} (${ct})`);
+    }
+  }
+}
+
 /* ---------------------------------------------------------------- */
 console.log(`\n${pass} 项通过，${fail} 项失败\n`);
 if (fail) {

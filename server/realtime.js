@@ -28,12 +28,13 @@ import {
   moveDevicesToRoom,
   setGlossary,
   referenceTranscript,
+  saveTimeline,
 } from './rooms.js';
 import { gradeTranscript, isProduct } from './judge.js';
 import { userFromCookieHeader } from './auth.js';
 import { ensureGeneration, jobStatus, genEvents } from './generate.js';
 import { buildSchedule } from './schedule.js';
-import { lookupAudio } from './tts.js';
+import { lookupAudio, parseAlignment } from './tts.js';
 
 const PREPARE_TIMEOUT_MS = 15000; // 等设备预加载的上限
 const GO_LEAD_MS = 1200; // 所有设备就绪后再留这么久做最后对齐
@@ -457,7 +458,7 @@ function startRoom(io, roomId, socket, { fromIdx } = {}) {
   const audioMap = new Map();
   for (const t of targets) {
     const row = t.hash ? lookupAudio(t.hash) : null;
-    if (row) audioMap.set(t.idx, { hash: t.hash, durationMs: row.duration_ms });
+    if (row) audioMap.set(t.idx, { hash: t.hash, durationMs: row.duration_ms, alignment: parseAlignment(row.alignment) });
   }
 
   const speakerMap = new Map(getSpeakers(roomId).map((s) => [s.name, s]));
@@ -467,7 +468,24 @@ function startRoom(io, roomId, socket, { fromIdx } = {}) {
   const built = buildSchedule(room, getLines(roomId), speakerMap, audioMap, hostDevice);
   let { items, totalMs, overlaps } = built;
 
-  // 从某一句开始：之前的全部丢掉（包括和这一句重叠的上一句），时间线平移到 0
+  // 脚本房间：两个人的话叠在一起却分在同一台设备上，声音从同一个位置出来，
+  // 收音端很难分出是两个人 —— 照常播，但提醒房主把这两个角色分开
+  const sameDevice = built.warnings?.sameDeviceOverlaps?.length || 0;
+  if (sameDevice) {
+    socket.emit('toast', {
+      kind: 'info',
+      message: `${sameDevice} overlapping line pair(s) are read by the same device — put those speakers on different devices so the recorder can tell them apart`,
+    });
+  }
+  const badRefs = (built.warnings?.unresolvedRefs?.length || 0) + (built.warnings?.missingAnchors?.length || 0);
+  if (badRefs) {
+    socket.emit('toast', {
+      kind: 'info',
+      message: `${badRefs} line(s) point at a timing ref or at_text that is not in the script — they were placed after the previous line instead`,
+    });
+  }
+
+  // 从某一句开始：比它开口早的全部丢掉（包括和这一句重叠的上一句），时间线平移到 0
   if (fromIdx !== undefined && fromIdx !== null) {
     const at = items.findIndex((i) => i.idx === Number(fromIdx));
     if (at < 0) {
@@ -475,7 +493,8 @@ function startRoom(io, roomId, socket, { fromIdx } = {}) {
       return;
     }
     const offset = items[at].startMs;
-    items = items.slice(at).map((i) => ({ ...i, startMs: i.startMs - offset }));
+    // 按开口时刻筛而不是按下标切：脚本房间里附和、打断的下标和开口先后不一定一致
+    items = items.filter((i) => i.startMs >= offset).map((i) => ({ ...i, startMs: i.startMs - offset }));
     totalMs = items.reduce((max, it) => Math.max(max, it.startMs + it.durationMs), 0);
     overlaps = items.filter((i) => i.overlapMs > 0).length;
   }
@@ -500,6 +519,8 @@ function startRoom(io, roomId, socket, { fromIdx } = {}) {
     token,
     items,
     totalMs,
+    fromIdx: fromIdx ?? null,
+    scriptMode: Boolean(room.script_mode),
     pending,
     started: false,
     launched: false,
@@ -579,6 +600,24 @@ function launch(io, roomId) {
 
   const startAt = Date.now() + GO_LEAD_MS;
   session.startAt = startAt;
+  // 实际播出来的时间线就是 GT 时间戳的来源（无序房间的抢话每次都不一样）
+  saveTimeline(roomId, {
+    startedAt: startAt,
+    fromIdx: session.fromIdx,
+    scriptMode: session.scriptMode,
+    totalMs: session.totalMs,
+    items: session.items.map((i) => ({
+      idx: i.idx,
+      uid: i.uid ?? null,
+      kind: i.kind ?? 'speech',
+      speaker: i.speaker,
+      hash: i.hash,
+      startMs: i.startMs,
+      durationMs: i.durationMs,
+      speechStartMs: i.speechStartMs ?? null,
+      speechEndMs: i.speechEndMs ?? null,
+    })),
+  });
   io.to(roomId).emit('play:go', { token: session.token, startAt, totalMs: session.totalMs });
 
   session.endTimer = setTimeout(() => {
@@ -612,6 +651,13 @@ function pauseRoom(io, roomId) {
   if (current && elapsed >= current.startMs + current.durationMs) {
     const next = session.items[session.items.indexOf(current) + 1];
     if (next) current = next;
+  }
+  // 脚本房间：附和、笑声这种插进来的条目不适合当续播起点（续播会把它叠着的那句话丢掉），
+  // 往前找最近的一句正经发言
+  if (current && session.scriptMode && current.kind && current.kind !== 'speech') {
+    const at = session.items.indexOf(current);
+    const back = session.items.slice(0, at).reverse().find((i) => !i.kind || i.kind === 'speech');
+    if (back) current = back;
   }
   if (current) pausedAt.set(roomId, current.idx);
   endSession(io, roomId, 'paused');

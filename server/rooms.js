@@ -9,6 +9,7 @@ import {
   speedFor,
 } from './voices.js';
 import { audioHash, lookupAudio, normalizeModel, DEFAULT_TTS_MODEL } from './tts.js';
+import { ttsInputOf } from './script.js';
 
 // 去掉 0/O/1/I 这些看错就加不进房间的字符
 const ID_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -122,7 +123,12 @@ export function claimRooms(userId, list) {
 }
 
 export function getLines(roomId) {
-  return db.prepare('SELECT idx, speaker, content FROM lines WHERE room_id = ? ORDER BY idx').all(roomId);
+  return db
+    .prepare(
+      `SELECT idx, speaker, content, uid, kind, tts_text, tts_continuation, timing, cut_off, clean
+       FROM lines WHERE room_id = ? ORDER BY idx`
+    )
+    .all(roomId);
 }
 
 export function getSpeakers(roomId) {
@@ -151,7 +157,8 @@ export function setTranscript(roomId, parsed, plan = {}) {
   if (!parsed.lines.length) throw new Error('No lines were parsed');
 
   const insertLine = db.prepare(
-    'INSERT INTO lines (room_id, idx, speaker, content) VALUES (?, ?, ?, ?)'
+    `INSERT INTO lines (room_id, idx, speaker, content, uid, kind, tts_text, tts_continuation, timing, cut_off, clean)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   const insertSpeaker = db.prepare(
     `INSERT INTO speakers (room_id, name, voice, config, instructions, custom, device_id)
@@ -160,7 +167,30 @@ export function setTranscript(roomId, parsed, plan = {}) {
 
   db.exec('BEGIN');
   try {
-    parsed.lines.forEach((l, i) => insertLine.run(roomId, i, l.speaker, l.content));
+    parsed.lines.forEach((l, i) =>
+      insertLine.run(
+        roomId,
+        i,
+        l.speaker,
+        l.content,
+        l.uid ?? null,
+        l.kind ?? 'speech',
+        l.ttsText ?? null,
+        l.ttsContinuation ?? null,
+        l.timing ? JSON.stringify(l.timing) : null,
+        l.cutOff ? 1 : 0,
+        l.clean ?? null
+      )
+    );
+
+    // script.json：开口时机按脚本排；meta 和 answer key 原样留着
+    if (parsed.script) {
+      db.prepare('UPDATE rooms SET script_mode = 1, script_meta = ?, answer_key = ? WHERE id = ?').run(
+        JSON.stringify({ meta: parsed.script.meta ?? {}, speakers: parsed.script.speakers ?? [] }),
+        parsed.script.answerKey ? JSON.stringify(parsed.script.answerKey) : null,
+        roomId
+      );
+    }
 
     const used = [];
     for (const name of parsed.speakers) {
@@ -627,11 +657,38 @@ export function setComparisonState(roomId, product, state, { result, error } = {
   );
 }
 
-/** 房间里那份原始 transcript，拼成 `Speaker: 内容` 的纯文本给裁判当真值 */
+/** 房间里那份原始 transcript，拼成 `Speaker: 内容` 的纯文本给裁判当真值（非语言声音没有文字，不进） */
 export function referenceTranscript(roomId) {
   return getLines(roomId)
+    .filter((l) => l.content)
     .map((l) => `${l.speaker}: ${l.content}`)
     .join('\n');
+}
+
+/** script.json 附带的 answer key（给以后的 summary 评估），没有就是 null */
+export function getAnswerKey(roomId) {
+  const row = db.prepare('SELECT answer_key FROM rooms WHERE id = ?').get(roomId);
+  if (!row?.answer_key) return null;
+  try {
+    return JSON.parse(row.answer_key);
+  } catch {
+    return null;
+  }
+}
+
+/** 记下这一次开播的时间线：GT 时间戳以实际播出来的为准（无序房间的抢话是随机的） */
+export function saveTimeline(roomId, timeline) {
+  db.prepare('UPDATE rooms SET last_timeline = ? WHERE id = ?').run(JSON.stringify(timeline), roomId);
+}
+
+export function getSavedTimeline(roomId) {
+  const row = db.prepare('SELECT last_timeline FROM rooms WHERE id = ?').get(roomId);
+  if (!row?.last_timeline) return null;
+  try {
+    return JSON.parse(row.last_timeline);
+  } catch {
+    return null;
+  }
 }
 
 /** 当前场景用哪个链接 */
@@ -654,9 +711,15 @@ export function setRoomStatus(roomId, status) {
 /* 生成进度 / 状态快照                                                   */
 /* ------------------------------------------------------------------ */
 
-/** 每句话当前应该是哪个音频文件（由 speaker 的音色配置决定） */
+/**
+ * 每句话当前应该是哪个音频文件（由 speaker 的音色配置决定）。
+ * 送给 TTS 的是 ttsInputOf(line)：普通房间就是 content；脚本房间可能是带数字读法、
+ * [标签]、被打断续接的 tts_text。脚本房间还要逐词时间戳（withAlignment）。
+ */
 export function lineTargets(roomId) {
-  const model = normalizeModel(getRoom(roomId)?.tts_model);
+  const room = getRoom(roomId);
+  const model = normalizeModel(room?.tts_model);
+  const withAlignment = Boolean(room?.script_mode);
   const speakers = new Map(
     getSpeakers(roomId).map((s) => [
       s.name,
@@ -665,12 +728,15 @@ export function lineTargets(roomId) {
   );
   return getLines(roomId).map((line) => {
     const sp = speakers.get(line.speaker);
+    const ttsInput = ttsInputOf(line);
     const hash = sp
-      ? audioHash({ model, voice: sp.voice, instructions: sp.instructions, speed: sp.speed, text: line.content })
+      ? audioHash({ model, voice: sp.voice, instructions: sp.instructions, speed: sp.speed, text: ttsInput })
       : null;
     return {
       ...line,
       hash,
+      ttsInput,
+      withAlignment,
       model,
       voice: sp?.voice,
       instructions: sp?.instructions,
@@ -682,7 +748,12 @@ export function lineTargets(roomId) {
 
 export function generationProgress(roomId) {
   const targets = lineTargets(roomId);
-  const mask = targets.map((t) => (t.hash && lookupAudio(t.hash) ? 1 : 0));
+  // 脚本房间：音频在、但还没要过时间戳的（普通房间合成过的同一句话）也算没好
+  const isReady = (t) => {
+    const row = t.hash ? lookupAudio(t.hash) : null;
+    return Boolean(row && (!t.withAlignment || row.alignment != null));
+  };
+  const mask = targets.map((t) => (isReady(t) ? 1 : 0));
   const ready = mask.reduce((a, b) => a + b, 0);
   return { ready, total: targets.length, mask };
 }
@@ -693,7 +764,8 @@ export function roomState(roomId) {
 
   const roomModel = normalizeModel(room.tts_model);
   const firstLine = db.prepare(
-    'SELECT content FROM lines WHERE room_id = ? AND speaker = ? ORDER BY idx LIMIT 1'
+    `SELECT content, tts_text, tts_continuation, cut_off FROM lines
+     WHERE room_id = ? AND speaker = ? AND kind != 'nonspeech' ORDER BY idx LIMIT 1`
   );
 
   const speakers = getSpeakers(roomId).map((s) => {
@@ -702,7 +774,7 @@ export function roomState(roomId) {
     // 这个角色第一句话的音频（如果已经合成好），用来在界面上试听
     const first = firstLine.get(roomId, s.name);
     const sampleHash = first
-      ? audioHash({ model: roomModel, voice: s.voice, instructions: s.instructions, speed: speedFor(config), text: first.content })
+      ? audioHash({ model: roomModel, voice: s.voice, instructions: s.instructions, speed: speedFor(config), text: ttsInputOf(first) })
       : null;
     return {
       sampleHash: sampleHash && lookupAudio(sampleHash) ? sampleHash : null,
@@ -735,6 +807,9 @@ export function roomState(roomId) {
     title: room.title,
     locked: Boolean(room.locked),
     status: room.status,
+    // 脚本房间：开口时机来自 script.json，有序/无序和抢话周期不起作用
+    scriptMode: Boolean(room.script_mode),
+    hasAnswerKey: Boolean(room.answer_key),
     hostDevice: room.host_device,
     settings: {
       orderMode: room.order_mode,

@@ -13,6 +13,7 @@ TTS 用 Fish Audio S2.1-Pro Free，直连官方 API（`api.fish.audio`）。
 - **合成是显式的一步** —— 上传和改设定都不会触发 TTS，房主把所有角色确认好之后点「合成音频」才开跑
 - **界面是英文的** —— 代码注释和这份 README 还是中文
 - **音频只合成一次** —— 按「模型 + 音色 + 语速 + 文本」的哈希存盘，改哪个角色就只重跑哪个角色；改回用过的设定直接命中缓存，一次 API 都不发
+- **脚本模式** —— 导入按《会议脚本重写规范》写的 `script.json`（+ 同名 `answer_key.json`）时，每句话什么时候开口（停顿、抢话、附和、打断）由脚本里的 timing 决定，用 Fish 的逐词时间戳落到毫秒；播完能导出带真实时间戳的参考转写和说话人分离 GT（见下方「脚本模式」）
 
 ---
 
@@ -206,7 +207,11 @@ node --env-file-if-exists=.env scripts/check-fish.mjs
 
 会验证：音色库字段齐全性、msgpack 请求、mp3/wav/pcm/opus 各格式、`prosody.speed`
 是否真的改变时长、`[方括号标签]` 会不会被念出来、不存在的 `reference_id` 会不会被拒、
-单次请求的字数上限。
+单次请求的字数上限，以及脚本房间用的 `/v1/tts/stream/with-timestamp`：
+- 免费模型能不能用；
+- 中文的「词」是什么粒度；
+- `[break]` 会不会混进词里；
+- 对齐快照是不是真的要「替换」。
 
 **2026-09-15 首次对着真实 API 跑通，16 项全过。** 当时确认的几件事：
 
@@ -310,9 +315,52 @@ Alice: Let's start with last week's numbers.
 
 台词里名字后面的括号备注（`Alice (Indian accent): ...`）也算。
 
+`X.script.json` 不看文件名和要求头，配置全在 JSON 里（见「脚本模式」）。同时选上同名的
+`X.answer_key.json`，前端会把这一对配好、作为一场会导入同一个房间。这时一次最多 200 个文件，也就是 100 场会。
+
 没指名道姓的口音按顺序分给前几个说话人，其余说话人用该语种的无口音音色，同一房间里
 尽量不重复。房间名自动生成成 `会议主题 | EN·3p·Indian·Chaos·Cafe` 这种（有序、安静是默认值，
 不写进名字）。
+
+### 脚本模式（script.json）
+
+批量导入或在房间里直接贴一份 `script.json`（格式见《会议脚本重写规范》），房间就进入脚本模式。
+和普通 transcript 的区别：
+
+- **开口时机来自脚本**。每条 utterance 有 `timing`：
+  - `after`：在 `ref` 那句**说完最后一个词**之后 `gap_ms` 毫秒开口，负数就是抢话；
+  - `during`：在 `ref` 那句念到 `at_text` 这几个字时开口，用于附和和打断。
+
+  房间的有序 / 无序开关、句间隔、定时抢话、压音量都不起作用，设置面板里会写明。
+- **合成走带时间戳的接口**：`POST /v1/tts/stream/with-timestamp`（SSE，同样的参数，免费模型也能用），
+  逐词时间存进 `audio.alignment`。
+  - 「说完」「念到」按说话算，不按音频文件算，首尾静音不影响间隔。
+  - 同一句话之前被普通房间合成过、没有时间戳的，脚本房间会重合成一遍。
+  - 时间戳接口不可用时退回普通接口，记成「要过但没有」，排期按字数比例估，房间照样能开。
+- **送给 TTS 的文本可以和参考文本不同**：`text` 是 GT（数字写阿拉伯数字），`tts_text` 是念法
+  （数字口语化，可带 `[break]`、`[chuckling]` 这类 Fish 标签）。打分、Compare 用的永远是 `text`。
+- **被打断的句子**可以带 `tts_continuation`：合成时把后半句一起念，播放时在 `text` 最后一个词念完处
+  淡出停掉。这样语调是「话没说完」，而不是 TTS 给半句话配的句末降调。续接的词谁也听不到。
+- **同一个角色的连续句不合并**，脚本里分几条就是几条。非语言声音（`type: nonspeech`）只合成 Fish 标签，
+  不进参考转写。
+- **两个人的话叠在一起却分在同一台设备上**，开播时会提醒房主：声音从同一个位置出来，收音端分不清是两个人。
+  另外尽量别用蓝牙音箱，它会多出 100–300ms 延迟，把设计好的重叠推歪。
+- **导入时的配置**：
+  - `meta.language` → 音色语种；`voice.gender` / `voice.locale` / `l1` → 音色和口音；
+  - `meta.environment` → 环境音；
+  - `answer_key.entities` 里的人名、产品名、术语 → glossary。
+
+**GT 导出**（Script 卡片右上角也有链接）：
+
+| 接口 | 内容 |
+| --- | --- |
+| `GET /api/rooms/:id/timeline` | 每句话在整场会议里的说话区间和逐词时间（JSON） |
+| `GET /api/rooms/:id/timeline?format=txt` | `[mm:ss.s] 说话人: 原文`，带真实时间戳的参考转写 |
+| `GET /api/rooms/:id/timeline?format=rttm` | 说话人分离 GT，可直接喂给 pyannote / dscore 算 DER |
+| `GET /api/rooms/:id/answer-key` | 导入时附带的 answer key（summary 评估的真值） |
+
+时间线以**最近一次实际开播**为准（每次 go 时落库），无序房间的抢话每次都不一样，所以这一点很重要。
+还没播过、但音频都合成好的房间会现排一份，标 `played: false`。
 
 ### 设备角色
 
@@ -446,7 +494,8 @@ server/
   voice-library.js     音色库：按国家/语种分组的 reference_id（先选国家再选音色）
   tts.js               Fish API 调用（msgpack）、内容寻址缓存、时长探测、限流重试
   generate.js          房间级的批量合成任务（限并发、推进度、跑完再扫一遍）
-  schedule.js          把台词排成带绝对偏移的时间线（有序 / 抢话 / 压音量）
+  schedule.js          把台词排成带绝对偏移的时间线（有序 / 抢话 / 压音量）；脚本房间交给 script.js
+  script.js            脚本模式：解析 script.json、送给 TTS 的文本、逐词时间戳定位、按 timing 排期、GT 时间线导出
   rooms.js             房间、角色、设备（朗读 / 环境音 / 收音）、分配、换房间、设置的读写
   importer.js          批量导入：读文件里的要求，挑口音音色、配房间、自动命名
   auth.js              Google 登录（OAuth 授权码流程）、会话 cookie、建房 / 导入的登录要求
@@ -459,4 +508,5 @@ scripts/
   fetch-fish-voices.mjs  从 fish.audio 公开库拉音色表
   check-fish.mjs       对着真实 API 自检
   check-batch.mjs      批量导入、自动分配、收音设备、换房间跟随、环境音先出声的断言
+  check-script.mjs     脚本模式：解析、逐词定位、排期、导入 answer key、带时间戳的合成和退路、GT 导出、开播
 ```

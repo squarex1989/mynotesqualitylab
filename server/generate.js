@@ -68,7 +68,8 @@ async function run(roomId, job) {
               voice: target.voice,
               instructions: target.instructions,
               speed: target.speed,
-              text: target.content,
+              text: target.ttsInput,
+              withAlignment: target.withAlignment,
             });
           } catch (err) {
             const message = err?.message || String(err);
