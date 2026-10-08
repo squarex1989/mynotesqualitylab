@@ -4,6 +4,7 @@ import fsp from 'node:fs/promises';
 import { encode as msgpackEncode } from '@msgpack/msgpack';
 import { parseBuffer } from 'music-metadata';
 import { db, audioPath } from './db.js';
+import { alignmentFromSnapshots, parseTimestampStream } from './script.js';
 
 // Fish Audio 原生 API。契约来自官方 SDK（fishaudio/fish-audio-python）：
 //
@@ -99,10 +100,7 @@ async function probeDurationMs(buffer) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function synthesize({ model, voice, instructions, speed, text }) {
-  const problem = apiKeyProblem();
-  if (problem) throw new Error(`${problem} — fix .env and restart the server`);
-
+function ttsPayload({ voice, instructions, speed, text }) {
   // S2.1-Pro 的风格控制是 [方括号标签] 拼在正文前面，标签本身不会被读出来
   const payload = {
     text: instructions ? `[${instructions}] ${text}` : text,
@@ -114,11 +112,22 @@ async function synthesize({ model, voice, instructions, speed, text }) {
   };
   if (voice) payload.reference_id = voice;
   if (speed && speed !== 1) payload.prosody = { speed, volume: 0 };
+  return payload;
+}
+
+/**
+ * 发一次 Fish 请求，带重试。readBody(res) 把成功的响应读成想要的东西。
+ * 失败时抛出的 Error 带 status / code，调用方据此决定要不要换条路。
+ */
+async function callFish(endpoint, { model, ...rest }, readBody) {
+  const problem = apiKeyProblem();
+  if (problem) throw new Error(`${problem} — fix .env and restart the server`);
+  const payload = ttsPayload(rest);
 
   let lastErr;
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
-      const res = await fetch(`${BASE_URL()}/v1/tts`, {
+      const res = await fetch(`${BASE_URL()}${endpoint}`, {
         method: 'POST',
         headers: {
           authorization: `Bearer ${process.env.FISH_API_KEY}`,
@@ -129,16 +138,7 @@ async function synthesize({ model, voice, instructions, speed, text }) {
         signal: AbortSignal.timeout(120000),
       });
 
-      if (res.ok) {
-        const contentType = res.headers.get('content-type') || '';
-        const buf = Buffer.from(await res.arrayBuffer());
-        if (!buf.length) throw new Error('The API returned 0 bytes of audio');
-        // 出错时有些网关会回 JSON 而不是音频，content-type 能识破
-        if (contentType.includes('application/json')) {
-          throw new Error(`Expected audio, got JSON: ${buf.toString('utf8').slice(0, 200)}`);
-        }
-        return buf;
-      }
+      if (res.ok) return await readBody(res);
 
       const raw = (await res.text().catch(() => '')) || '';
       let message = raw.slice(0, 300);
@@ -181,33 +181,91 @@ async function synthesize({ model, voice, instructions, speed, text }) {
   throw lastErr;
 }
 
+async function readAudio(res) {
+  const contentType = res.headers.get('content-type') || '';
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (!buf.length) throw new Error('The API returned 0 bytes of audio');
+  // 出错时有些网关会回 JSON 而不是音频，content-type 能识破
+  if (contentType.includes('application/json')) {
+    throw new Error(`Expected audio, got JSON: ${buf.toString('utf8').slice(0, 200)}`);
+  }
+  return buf;
+}
+
+function synthesize(args) {
+  return callFish('/v1/tts', args, readAudio);
+}
+
+async function synthesizeTimed(args) {
+  const { buffer, snapshots } = await callFish('/v1/tts/stream/with-timestamp', args, async (res) =>
+    parseTimestampStream(await res.text())
+  );
+  return { buffer, snapshots };
+}
+
+// 时间戳接口不可用时（没开通、模型不支持、参数不认）退回普通接口，句子照样能合成，
+// 只是没有逐词时间 —— 排期会按字数比例估。401 是 key 的问题、429 已经重试过，不换路。
+const timestampFallback = (err) => err?.status >= 400 && err.status < 500 && err.status !== 401 && err.status !== 429;
+
 // 同一个 hash 并发请求时只跑一次
 const inflight = new Map();
 
 /**
  * 拿到这句话的音频；已缓存就直接返回，没有才调 TTS。
- * @returns {Promise<{hash: string, durationMs: number, cached: boolean}>}
+ * withAlignment：脚本房间要逐词时间戳。缓存里有音频但没要过时间戳（alignment 为 NULL）
+ * 就重新合成一遍、覆盖同一个 hash —— 文本和音色都没变，只是换了一次「念法」。
+ * @returns {Promise<{hash: string, durationMs: number, cached: boolean, alignment: object|null}>}
  */
-export async function ensureAudio({ model, voice, instructions, speed = 1, text }) {
+export async function ensureAudio({ model, voice, instructions, speed = 1, text, withAlignment = false }) {
   const hash = audioHash({ model, voice, instructions, speed, text });
 
   const hit = lookupAudio(hash);
-  if (hit) return { hash, durationMs: hit.duration_ms, cached: true };
+  if (hit && (!withAlignment || hit.alignment != null)) {
+    return { hash, durationMs: hit.duration_ms, cached: true, alignment: parseAlignment(hit.alignment) };
+  }
 
-  if (inflight.has(hash)) return inflight.get(hash);
+  const key = withAlignment ? `${hash}:aligned` : hash;
+  if (inflight.has(key)) return inflight.get(key);
 
   const task = (async () => {
-    const buffer = await synthesize({ model, voice, instructions, speed, text });
+    const args = { model, voice, instructions, speed, text };
+    let buffer;
+    let alignment = null;
+    let snapshots = null;
+    if (withAlignment) {
+      try {
+        ({ buffer, snapshots } = await synthesizeTimed(args));
+      } catch (err) {
+        if (!timestampFallback(err)) throw err;
+        console.warn(`[tts] 时间戳接口不可用（${err.status} ${err.message}），退回普通接口`);
+        buffer = await synthesize(args);
+        alignment = { unavailable: true, reason: String(err.message || err.status).slice(0, 200) };
+      }
+    } else {
+      buffer = await synthesize(args);
+    }
     const durationMs = await probeDurationMs(buffer);
+    if (snapshots) {
+      alignment = alignmentFromSnapshots(snapshots, durationMs / 1000) || { unavailable: true, reason: 'no segments' };
+    }
     const tmp = `${audioPath(hash)}.${process.pid}.tmp`;
     await fsp.writeFile(tmp, buffer);
     await fsp.rename(tmp, audioPath(hash)); // 原子落盘，避免读到写了一半的文件
     db.prepare(
-      'INSERT OR REPLACE INTO audio (hash, duration_ms, bytes, created_at) VALUES (?, ?, ?, ?)'
-    ).run(hash, durationMs, buffer.length, Date.now());
-    return { hash, durationMs, cached: false };
-  })().finally(() => inflight.delete(hash));
+      'INSERT OR REPLACE INTO audio (hash, duration_ms, bytes, created_at, alignment) VALUES (?, ?, ?, ?, ?)'
+    ).run(hash, durationMs, buffer.length, Date.now(), alignment ? JSON.stringify(alignment) : null);
+    return { hash, durationMs, cached: false, alignment };
+  })().finally(() => inflight.delete(key));
 
-  inflight.set(hash, task);
+  inflight.set(key, task);
   return task;
+}
+
+export function parseAlignment(raw) {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
 }

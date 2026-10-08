@@ -23,7 +23,7 @@ export const api = {
       body: JSON.stringify({ title }),
     }),
 
-  importRooms: (files: { name: string; text: string }[]) =>
+  importRooms: (files: { name: string; text: string; answerKey?: string }[]) =>
     req<{ results: ImportResult[] }>('/api/rooms/import', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

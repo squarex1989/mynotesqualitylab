@@ -545,9 +545,24 @@ export class AudioEngine {
       }
     }
 
+    // 被打断的句子：音频里还有只合成、不播放的后半句（让语调像「话没说完」），
+    // 念到截止点淡出停掉，后半句谁也听不到
+    let stopCtx: number | null = null;
+    if (item.stopAtMs != null) {
+      stopCtx = startCtx + item.stopAtMs / 1000;
+      if (stopCtx <= now + 0.02) {
+        this.play.skippedLate++; // 迟到太多，该出声的部分已经过去了
+        return;
+      }
+      const fade = Math.max(0.02, (item.fadeMs ?? 80) / 1000);
+      gain.gain.setValueAtTime(volume, Math.max(stopCtx - fade, when, now));
+      gain.gain.linearRampToValueAtTime(0, stopCtx);
+    }
+
     src.connect(gain);
     gain.connect(this.ctx.destination);
     src.start(when, offset);
+    if (stopCtx != null) src.stop(stopCtx + 0.01); // stop() 必须在 start() 之后调
     this.play.scheduled++;
 
     this.active.add(src);

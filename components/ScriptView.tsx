@@ -4,6 +4,9 @@ import { useEffect, useRef } from 'react';
 import type { Line, Progress, ScheduleItem } from '@/lib/types';
 
 interface Props {
+  /** For the timeline / answer key download links */
+  roomId?: string;
+  hasAnswerKey?: boolean;
   lines: Line[];
   progress: Progress | null;
   schedule: ScheduleItem[];
@@ -17,6 +20,8 @@ interface Props {
 const NOT_READY_TIP = 'All audio needs to be ready before you can play from here';
 
 export function ScriptView({
+  roomId,
+  hasAnswerKey,
   lines,
   progress,
   schedule,
@@ -40,6 +45,32 @@ export function ScriptView({
     <div className="card">
       <div className="spread" style={{ marginBottom: 10 }}>
         <h2>Script ({lines.length} lines)</h2>
+        {roomId && (
+          <span className="tiny muted">
+            {/* 带真实时间戳的参考转写：以最近一次开播为准，没播过就按当前音频现排 */}
+            Timeline{' '}
+            <a href={`/api/rooms/${roomId}/timeline?format=txt`} target="_blank" rel="noreferrer">
+              TXT
+            </a>{' '}
+            ·{' '}
+            <a href={`/api/rooms/${roomId}/timeline`} target="_blank" rel="noreferrer">
+              JSON
+            </a>{' '}
+            ·{' '}
+            <a href={`/api/rooms/${roomId}/timeline?format=rttm`} target="_blank" rel="noreferrer">
+              RTTM
+            </a>
+            {hasAnswerKey && (
+              <>
+                {' '}
+                ·{' '}
+                <a href={`/api/rooms/${roomId}/answer-key`} target="_blank" rel="noreferrer">
+                  Answer key
+                </a>
+              </>
+            )}
+          </span>
+        )}
       </div>
 
       <div className="script" ref={boxRef}>
@@ -77,7 +108,17 @@ export function ScriptView({
               <span className="who">{l.speaker}</span>
               <span>
                 {overlapAt.has(l.idx) && <span className="overlap">⚡cuts in </span>}
-                {l.content}
+                {l.kind === 'nonspeech' ? (
+                  // 笑声、叹气：没有文字，不进参考转写，只显示送给 TTS 的标签
+                  <span className="muted" style={{ fontStyle: 'italic' }}>
+                    {l.tts_text}
+                  </span>
+                ) : l.kind === 'backchannel' ? (
+                  <span className="muted">{l.content}</span>
+                ) : (
+                  l.content
+                )}
+                {l.cut_off ? <span className="muted"> —</span> : null}
               </span>
             </div>
           );
