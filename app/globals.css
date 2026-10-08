@@ -338,7 +338,8 @@ label.field {
 
 .line {
   display: grid;
-  grid-template-columns: 30px 108px 1fr;
+  /* 第一列放「状态点 + 序号」：要放得下四位数（脚本房间动辄几百句），不然序号会被挤到点的下一行 */
+  grid-template-columns: 44px 108px 1fr;
   gap: 10px;
   padding: 7px 8px;
   border-radius: 8px;
@@ -357,6 +358,10 @@ label.field {
   font-family: var(--mono);
   font-size: 11px;
   color: var(--muted);
+}
+
+.line .no-inner {
+  white-space: nowrap;
 }
 
 .line .who {
@@ -727,7 +732,7 @@ table.scores .finding {
     min-height: 44px;
   }
   .line {
-    grid-template-columns: 22px 72px 1fr;
+    grid-template-columns: 40px 72px 1fr;
     gap: 6px;
     padding: 6px 4px;
   }
