@@ -1,4 +1,4 @@
-import type { Meta, ParsePreview, RoomState, Progress, Line, RoomSummary, ImportResult } from './types';
+import type { Meta, ParsePreview, RoomState, Progress, Line, RoomSummary, ImportResult, Report, ReportListItem } from './types';
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
@@ -29,6 +29,20 @@ export const api = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ files }),
     }),
+
+  listReports: () => req<{ reports: ReportListItem[]; maxRooms: number }>('/api/reports'),
+
+  createReport: (body: { roomIds: string[]; title?: string; scoreMissing?: boolean }) =>
+    req<{ id: string; rooms: number; skipped: number }>('/api/reports', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+
+  getReport: (id: string) => req<{ report: Report }>(`/api/reports/${encodeURIComponent(id)}`),
+
+  deleteReport: (id: string) =>
+    req<{ ok: true }>(`/api/reports/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   roomSummaries: (ids: string[]) =>
     req<{ rooms: RoomSummary[] }>('/api/rooms/summaries', {
@@ -80,3 +94,6 @@ export const api = {
 };
 
 export const audioUrl = (hash: string) => `/api/audio/${hash}.mp3`;
+
+export const reportDownloadUrl = (id: string, format: 'md' | 'csv' | 'json') =>
+  `/api/reports/${encodeURIComponent(id)}/download?format=${format}`;

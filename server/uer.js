@@ -18,6 +18,8 @@
 // 而那个数据集是受限的（需要申请审批）。所以这里的 rubric 是按论文公开的三档定义
 // 和例子写的，措辞不同 —— 边界情况的判断会有出入，数量级和排序可比，逐位不可比。
 
+import { EVAL_MODEL } from './llm.js';
+
 const BASE_URL = () =>
   (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
 
@@ -27,7 +29,8 @@ const BASE_URL = () =>
  * 别的维度我们是两个裁判并排跑、分歧本身当信息看；但 UER 要的是一个能跟外部
  * 对比的数字，两个模型平均出来的东西不对应任何已发表的口径。
  */
-export const UER_MODEL = () => process.env.UER_MODEL || process.env.JUDGE_MODEL_GPT || 'openai/gpt-5.6-sol';
+// 和其余评估共用一个判定模型（EVAL_MODEL），需要时可以单独覆盖
+export const UER_MODEL = () => process.env.UER_MODEL || EVAL_MODEL();
 
 export const UER_CATEGORIES = [
   { score: 1, key: 'significant', label: 'Meaning changed' },

@@ -65,7 +65,8 @@ CREATE TABLE IF NOT EXISTS rooms (
   chaos_period_ms INTEGER NOT NULL DEFAULT 20000,
   duck_gain     REAL NOT NULL DEFAULT 0.5,
   status        TEXT NOT NULL DEFAULT 'idle',     -- idle | playing
-  owner_id      TEXT                              -- 建房的账号（users.id）；账号体系之前的房间为空
+  owner_id      TEXT,                             -- 建房的账号（users.id）；账号体系之前的房间为空
+  language      TEXT                              -- 脚本语种（en / zh / ...）
 );
 
 CREATE TABLE IF NOT EXISTS lines (
@@ -103,7 +104,10 @@ CREATE TABLE IF NOT EXISTS comparisons (
   room_id     TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   product     TEXT NOT NULL,          -- my-notes | granola | otter
   transcript  TEXT NOT NULL,          -- 该产品录出来的文本（可以是空串：只贴了 summary）
-  summary     TEXT,                   -- 该产品生成的会议摘要；评估逻辑后补
+  summary     TEXT,                   -- 该产品生成的会议摘要
+  summary_result TEXT,                -- JSON：摘要 + 行动项的评估
+  summary_state  TEXT NOT NULL DEFAULT 'idle',   -- idle | scoring | done | failed
+  summary_error  TEXT,
   result      TEXT,                   -- JSON：两个裁判各自的分数和简报
   state       TEXT NOT NULL DEFAULT 'idle',  -- idle | scoring | done | failed
   error       TEXT,
@@ -139,6 +143,32 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires_at  INTEGER NOT NULL
 );
 
+-- 每个房间从脚本里抽一次的评估参考（实体词、应有的信息单元），三个产品共用
+CREATE TABLE IF NOT EXISTS room_reference (
+  room_id     TEXT PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
+  script_hash TEXT NOT NULL,
+  data        TEXT NOT NULL,        -- JSON: {entities, units}
+  model       TEXT,
+  created_at  INTEGER NOT NULL
+);
+
+-- 跨房间的综合报告。room_ids / data 都是 JSON；生成是异步的，state 记进度
+CREATE TABLE IF NOT EXISTS reports (
+  id          TEXT PRIMARY KEY,
+  owner_id    TEXT,
+  title       TEXT,
+  room_ids    TEXT NOT NULL,
+  options     TEXT,
+  state       TEXT NOT NULL DEFAULT 'running',   -- running | done | failed
+  progress    TEXT,                               -- JSON: {phase, done, total}
+  data        TEXT,                               -- JSON：代码算好的汇总
+  ai_summary  TEXT,
+  error       TEXT,
+  created_at  INTEGER NOT NULL,
+  finished_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_reports_owner ON reports(owner_id, created_at);
+
 CREATE INDEX IF NOT EXISTS idx_lines_room ON lines(room_id);
 CREATE INDEX IF NOT EXISTS idx_devices_room ON devices(room_id);
 `);
@@ -160,6 +190,10 @@ addColumnIfMissing('rooms', 'capture_device', 'TEXT');
 addColumnIfMissing('rooms', 'glossary', 'TEXT');
 addColumnIfMissing('devices', 'capture', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('comparisons', 'summary', 'TEXT');
+addColumnIfMissing('comparisons', 'summary_result', 'TEXT');
+addColumnIfMissing('comparisons', 'summary_state', "TEXT NOT NULL DEFAULT 'idle'");
+addColumnIfMissing('comparisons', 'summary_error', 'TEXT');
+addColumnIfMissing('rooms', 'language', 'TEXT'); // 导入时识别的语种；手动建的房间按脚本内容推
 addColumnIfMissing('rooms', 'owner_id', 'TEXT'); // 建房的账号；老房间为空，登录后用本机的 host token 认领
 db.exec('CREATE INDEX IF NOT EXISTS idx_rooms_owner ON rooms(owner_id)');
 

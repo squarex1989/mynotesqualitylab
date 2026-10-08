@@ -15,6 +15,7 @@
 
 import { alignTexts, werFromAlignment } from './wer.js';
 import { buildUtterances } from './uer.js';
+import { lineLanguage, languageMatches } from './lang.js';
 import {
   FILLER_PHRASES,
   NEGATION_PHRASES,
@@ -75,7 +76,7 @@ const maskOf = (occurrences) => {
  * 英文靠句中大写自动识别（句首大写是语法要求，不是线索）；中日文没有大小写，
  * 自动识别不了，所以靠 host 填的 glossary 和 transcript 里的说话人名字。
  */
-function properNouns(a, { glossary, speakerNames }, segIdx) {
+function properNouns(a, { glossary, speakerNames }, segIdx, { auto = true } = {}) {
   const occ = [];
 
   // glossary 和说话人名字：两种模式都按短语匹配。
@@ -95,7 +96,7 @@ function properNouns(a, { glossary, speakerNames }, segIdx) {
     occ.push({ term: join(a, range(o.start, o.end)), start: o.start, end: o.end, source: 'glossary' });
   }
 
-  if (a.mode === 'word') {
+  if (auto && a.mode === 'word') {
     // 句中大写词，连续的合成一个（Acme Corp 是一个名字，不是两个）
     let run = null;
     const flush = () => {
@@ -535,7 +536,7 @@ export function parseGlossary(text) {
  *
  * @param {{reference: string, candidate: string, glossary?: string}} input
  */
-export function codeMetrics({ reference, candidate, glossary = '' }) {
+export function codeMetrics({ reference, candidate, glossary = '', entities = [], language = null }) {
   const a = alignTexts(reference, candidate);
   const wer = werFromAlignment(a);
   if (wer.unavailable) return { wer, unavailable: true };
@@ -577,6 +578,8 @@ export function codeMetrics({ reference, candidate, glossary = '' }) {
 
   const opMap = opByRef(a.ops);
   const { hunks, truncated, totalRuns } = diffHunks(a);
+  const utterances = buildUtterances(a);
+  const properNounReport = termOutcomes(a, a.ops, opMap, refNouns);
 
   return {
     wer,
@@ -595,7 +598,22 @@ export function codeMetrics({ reference, candidate, glossary = '' }) {
       normalTokens: rw.count.normal,
       weights: WEIGHTS,
     },
-    properNouns: termOutcomes(a, a.ops, opMap, refNouns),
+    properNouns: properNounReport,
+    // EWER：只看实体词。有从脚本里抽出的实体表就只用它（+ glossary + 说话人名），
+    // 没有（比如没配模型 key）就退回自动识别的专有名词
+    ewer: entityErrorRate(
+      a,
+      entities.length
+        ? termOutcomes(
+            a,
+            a.ops,
+            opMap,
+            properNouns(a.ref, { glossary: [...entities, ...terms], speakerNames }, refSeg, { auto: false })
+          )
+        : properNounReport,
+      entities.length ? 'reference' : 'auto'
+    ),
+    languageCheck: languageCorrectness(utterances, language),
     numbers: termOutcomes(
       a,
       a.ops,
@@ -615,6 +633,63 @@ export function codeMetrics({ reference, candidate, glossary = '' }) {
     totalDiffRuns: totalRuns,
     // 按真值的行切成 utterance，交给 UER 那一步打分（见 server/uer.js）。
     // 只是中间产物，不进数据库。
-    utterances: buildUtterances(a),
+    utterances,
+  };
+}
+
+/**
+ * EWER（Entity Word Error Rate）：只看实体词的 WER。
+ *   S = 录成了别的（归一化之后仍不同；拆开、所有格这类写法差异不算错）
+ *   D = 整个漏掉
+ *   I 记 0 —— 产品多录出来的词无法判断「是不是实体」
+ *   N = 实体在脚本里出现的总次数
+ */
+function entityErrorRate(a, outcomes, source) {
+  const n = outcomes.occurrences;
+  if (!n) return { ewer: null, entities: 0, occurrences: 0, substitutions: 0, deletions: 0, source, errors: [] };
+  let sub = 0;
+  let del = 0;
+  for (const r of outcomes.issues) {
+    sub += r.wrong.reduce((x, w) => x + w.count, 0);
+    del += r.dropped;
+  }
+  return {
+    ewer: Math.round(((sub + del) / n) * 1000) / 10,
+    entities: outcomes.checked,
+    occurrences: n,
+    substitutions: sub,
+    deletions: del,
+    source,
+    errors: outcomes.issues.slice(0, 60),
+    variants: outcomes.variants,
+  };
+}
+
+/**
+ * 逐行的语言正确性。
+ *
+ * 以脚本的行为单位：每行的期望语种是脚本那一行自己的语种（中英混说的会议也能对上），
+ * 产品录出来的对应文本由对齐结果决定 —— 所以产品把一句话拆成好几行、或者把几句并成
+ * 一行都没关系，对齐会把它们归回脚本的那一行。
+ * 太短判断不了的行、整行都漏掉的行不计入（漏掉是 WER/UER 的问题，不是语言问题）。
+ */
+export function languageCorrectness(utterances, roomLanguage) {
+  let checked = 0;
+  const mismatches = [];
+  for (const u of utterances) {
+    if (!u.transcript.trim()) continue;
+    const expected = lineLanguage(u.script) ?? roomLanguage;
+    const got = lineLanguage(u.transcript);
+    if (!expected || !got) continue;
+    checked++;
+    if (!languageMatches(expected === 'latin' ? roomLanguage || 'en' : expected, got)) {
+      mismatches.push({ line: u.line, expected, got, script: u.script, transcript: u.transcript });
+    }
+  }
+  return {
+    checkedLines: checked,
+    wrongLines: mismatches.length,
+    correctness: checked ? Math.round(((checked - mismatches.length) / checked) * 1000) / 10 : null,
+    mismatches: mismatches.slice(0, 40),
   };
 }

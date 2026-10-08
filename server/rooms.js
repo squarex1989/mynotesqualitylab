@@ -9,6 +9,7 @@ import {
   speedFor,
 } from './voices.js';
 import { audioHash, lookupAudio, normalizeModel, DEFAULT_TTS_MODEL } from './tts.js';
+import { detectLanguage } from './lang.js';
 
 // 去掉 0/O/1/I 这些看错就加不进房间的字符
 const ID_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -574,6 +575,9 @@ export function getComparisons(roomId) {
       transcript: r.transcript,
       summary: r.summary || '',
       result: r.result ? JSON.parse(r.result) : null,
+      summaryResult: r.summary_result ? JSON.parse(r.summary_result) : null,
+      summaryState: r.summary_state || 'idle',
+      summaryError: r.summary_error,
       state: r.state,
       error: r.error,
       updatedAt: r.updated_at,
@@ -597,6 +601,7 @@ export function putComparison(roomId, product, { transcript, summary } = {}) {
     return;
   }
   const transcriptChanged = !row || nextTranscript !== row.transcript;
+  const summaryChanged = !row || nextSummary !== (row.summary || '');
   db.prepare(
     `INSERT INTO comparisons (room_id, product, transcript, summary, result, state, error, updated_at)
      VALUES (?, ?, ?, ?, NULL, 'idle', NULL, ?)
@@ -604,7 +609,8 @@ export function putComparison(roomId, product, { transcript, summary } = {}) {
        transcript = excluded.transcript,
        summary = excluded.summary,
        updated_at = excluded.updated_at
-       ${transcriptChanged ? ", result = NULL, state = 'idle', error = NULL" : ''}`
+       ${transcriptChanged ? ", result = NULL, state = 'idle', error = NULL" : ''}
+       ${summaryChanged ? ", summary_result = NULL, summary_state = 'idle', summary_error = NULL" : ''}`
   ).run(roomId, product, nextTranscript, nextSummary || null, Date.now());
 }
 
@@ -627,6 +633,14 @@ export function setComparisonState(roomId, product, state, { result, error } = {
   );
 }
 
+/** 摘要评估的状态和结果，和转录那一套分开存 */
+export function setSummaryState(roomId, product, state, { result, error } = {}) {
+  db.prepare(
+    `UPDATE comparisons SET summary_state = ?, summary_result = ?, summary_error = ?, updated_at = ?
+     WHERE room_id = ? AND product = ?`
+  ).run(state, result ? JSON.stringify(result) : null, error || null, Date.now(), roomId, product);
+}
+
 /** 房间里那份原始 transcript，拼成 `Speaker: 内容` 的纯文本给裁判当真值 */
 export function referenceTranscript(roomId) {
   return getLines(roomId)
@@ -644,6 +658,22 @@ export function setGlossary(roomId, text) {
   const clean = String(text || '').slice(0, 4000);
   db.prepare('UPDATE rooms SET glossary = ? WHERE id = ?').run(clean, roomId);
   return clean;
+}
+
+export function setRoomLanguage(roomId, language) {
+  db.prepare('UPDATE rooms SET language = ? WHERE id = ?').run(language || null, roomId);
+}
+
+/** 房间脚本的语种：导入时记下的优先，没有就按脚本内容推一次并记下来 */
+export function roomLanguage(roomId) {
+  const room = getRoom(roomId);
+  if (!room) return null;
+  if (room.language) return room.language;
+  const text = getLines(roomId).map((l) => l.content).join('\n');
+  if (!text.trim()) return null;
+  const lang = detectLanguage(text);
+  setRoomLanguage(roomId, lang);
+  return lang;
 }
 
 export function setRoomStatus(roomId, status) {

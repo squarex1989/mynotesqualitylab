@@ -53,8 +53,9 @@ npm run dev
 | `TTS_CONCURRENCY` | `4` | 同时并发的 TTS 请求数 |
 | `FISH_BASE_URL` | `https://api.fish.audio` | 本地测试时指向下面的 mock |
 | `OPENROUTER_API_KEY` | 用对比功能才需要 | 转录打分的两个裁判模型走 OpenRouter |
-| `JUDGE_MODEL_GPT` | `openai/gpt-5.6-sol` | 想换裁判时覆盖 |
-| `JUDGE_MODEL_CLAUDE` | `anthropic/claude-opus-5` | 同上 |
+| `EVAL_MODEL` | `anthropic/claude-opus-5` | 唯一的判定模型：抽参考、判 UER、判摘要、写报告总结 |
+| `UER_MODEL` | 同 `EVAL_MODEL` | 想单独换 UER 的分类模型时覆盖 |
+| `REPORT_SCORE_CONCURRENCY` | `4` | 报告「先补跑缺失的评估」时同时评几个产品 |
 | `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | 本地测试时指向假裁判 |
 | `GOOGLE_CLIENT_ID` | 生产环境必填 | Google 登录。没配时生产环境谁都建不了房，本地开发不要求登录 |
 | `GOOGLE_CLIENT_SECRET` | 生产环境必填 | 同上 |
@@ -118,50 +119,69 @@ npm run dev
 Compare 弹窗分两个 tab：
 
 - **Input** —— 每个产品一张卡，左边 transcript、右边 summary，可以粘贴也可以上传文件；
-  卡片右上角 **Score / Re-score** 给这个产品的转录打分（有没保存的改动会先存再打分）。
+  卡片右上角 **Score / Re-score** 同时评转录和摘要（各自有内容才评，有没保存的改动会先存再评）。
   glossary 也在这一页。
-- **Result** —— 打分结果（Ranking 表 + 每个产品的详细证据）。summary 的评估逻辑还没做，
-  先占着位置，只显示贴没贴。
+- **Result** —— 三家并排的主指标，加上每个产品的转录评估和摘要评估。每个数字都能展开看证据。
 
 权限：**房主和收音设备能贴/改转录和摘要、编 glossary、点 Score**；其他人只能看
 Result。写操作的权限检查在服务端（`compareOnly()`），不是靠前端隐藏几个按钮撑着。
-只改摘要不会清掉转录的分数；改了转录，那个产品的旧分数会自动作废。
+改了转录只作废转录的分数，改了摘要只作废摘要的分数。
 
-**房间里那份原始 transcript 是唯一真值**，三家各自和它比对。
+#### 评估口径
 
-大部分指标是 code 算出来的（编辑距离），不经过模型：
+按团队文档《How we measure summary and transcript quality》。**房间里那份原始脚本是唯一真值**，
+三家各自和它比对。模型只回答语义问题（这条陈述有没有原文支撑、这个信息点有没有被覆盖、这个错误
+改没改变意思），给出逐条的结构化结论和原文证据；**所有分数都由代码算**。只用一个判定模型
+（`EVAL_MODEL`，默认 Claude），走 OpenRouter 的 structured outputs（JSON Schema strict）。
 
-- **Plain WER / CER** —— 标准逐字错误率，中日文按字算
-- **Weighted WER** —— 语气词 ×0.1、普通词 ×1、人名/数字/否定词 ×3，同样漏一个词，
-  漏「um」和漏一个人名的权重差 30 倍
-- **UER**（Utterance Error Rate）—— 和 [sierra-research/mu-bench](https://github.com/sierra-research/mu-bench)
-  同口径：每个错误单独判「意思变了 / 真实差异但意思保留 / 只是写法不同」三档，
-  再按句二值化——一句里错 1 个和错 10 个 UER 贡献一样，这是它的定义。
-- **DER**（Diarization Error Rate）—— 说话人归属换算成错误率（`100% - 归属准确率`），
-  跟前三个放在同一张 Ranking 表里，口径一致（越低越好）
-- 专有名词、数字逐条列出实际录成了什么（不是印象分）；同一个名字换个写法
-  （`NovaLedger` vs `Nova Ledger`、`Meridian's` vs `Meridian`）不算错
+每个房间第一次评估时，先从脚本里抽一次**参考**（缓存，三家共用）：实体词（人名、公司、产品、
+地点、术语），以及一份好的摘要应该包含的信息单元（决定、结论、风险、待解问题、事实、状态变化、
+讨论要点、行动项），每个单元带重要度（3 关键 / 2 重要 / 1 次要）。在 Result 页最下面能看到。
 
-只有两件事交给模型判断（那两件必须理解语义）：漏掉的内容算不算「关键」、有没有
-被录成相反的意思。两个裁判模型并排跑，都开最高推理档（`reasoning.effort: high`）：
+**Transcript**
 
-| 裁判 | slug |
-| --- | --- |
-| GPT-5.6 Sol (high) | `openai/gpt-5.6-sol` |
-| Claude Opus 5 (high) | `anthropic/claude-opus-5` |
+- **EWER** —— 只看实体词的 WER：(S + D) / 实体出现次数。拆开、所有格这类写法差异不算错
+  （`NovaLedger` → `Nova Ledger`）。数字日期单独列，不算进 EWER
+- **UER** —— 和 [sierra-research/mu-bench](https://github.com/sierra-research/mu-bench) 同口径：
+  每个错误判「意思变了 / 真实差异但意思保留 / 只是写法不同」三档，至少含一个「意思变了」的句子占比
+- **WDER** —— 对齐上的词里，落在错误说话人名下的占比（产品完全没做说话人分离时标 n/a）
+- **Language correctness** —— 逐行比对语种：每行的期望语种是脚本那一行自己的语种，产品录出来的
+  对应文本靠对齐找回来，所以**产品把一句话拆成几行、或几句并成一行都能对上**。整行漏掉的不算语言错误
+- **WER** —— 作为参考保留
 
-不打分，输出可核对的证据条目（真值原话 / 实际录成了什么 / 严重程度 / 为什么重要）。
-两个裁判都抓到的证据合并显示、标最可信；只有一个裁判抓到的单独标出来源。
+**Summary**
 
-Ranking 表按固定顺序排列（My Notes / Granola / Otter），表头是
-`Plain WER | Weighted WER | UER | DER`——不造合成总分，一个数字会掩盖各自错在哪儿。
-「Copy all results」把这些和每个产品的详细证据一起复制成 Markdown。
+- **Precision** —— 把摘要拆成原子陈述，逐条判 supported (1) / partially supported (0.5) /
+  unsupported / contradicted / irrelevant (0)，求平均。每条带原文行号、错误类型
+- **Recall（加权）** —— 参考信息单元的覆盖率，按重要度加权（covered 1 / partial 0.5 / missing 0），
+  另给按类型的拆分
+- **F1**
+- **Critical Error** —— 护栏，不并进 F1：编造决定或承诺、意思反转、名字或说话人归属错误、数字日期
+  错误、把被否决的说成已决定、泄露敏感内容；**漏掉重要度 3 的决定 / 行动项 / 风险**也算
+- 错误类型分布和诊断项（名字、数字日期、决定状态、说话人归属、术语、摘要语言）
+- Template Alignment 暂不评估（三家模板不同，没有统一的预期结构）
 
-打分结果存进房间数据库，房间里所有人（不用刷新）看到同一份。改了某个产品的转录
-文本，那一栏的旧结果会自动清空 —— 免得分数和文本对不上。
+**Action items**
 
-用的是 OpenRouter 的 **structured outputs**（JSON Schema strict）而不是让模型自由输出
-再解析 —— 评分一旦格式跑偏，解析逻辑会越写越脏，而且出错时很难发现。
+- Precision / Recall / F1（真正的承诺才算；把建议、讨论、被取消的事当成任务算错）
+- 负责人、截止时间、交付物、承诺状态各自的准确率，「全部字段都对」的比例，以及**编造负责人或
+  截止时间**的比例（没说就留空，比猜一个好）
+
+### 综合报告（Reports）
+
+首页右侧 Rooms 卡片里的 **Reports** 标签。顶部 **Generate report** 从自己的房间里多选或全选
+（最多 1000 个），可以勾选「先补跑缺失的评估」。报告异步生成，列表里能看到进度。
+
+汇总全部由代码算：
+
+- 每个产品每个指标的均值、中位数、95% 置信区间（n 一并给出）
+- **配对比较**：只用三家都有该指标的房间，算其它产品相对 My Notes 的差值和 95% 置信区间、
+  胜负平；区间不跨 0（且至少 3 个房间）才标为稳定的差异
+- 按语言、人数、有序/无序、环境音、口音分组
+- 错误类型和严重错误的分布、最常错的实体词、表现最差的房间、缺了哪些评估
+
+最后让判定模型**只读这些数字**写一段总结。报告可以下载成 Markdown、CSV（每个房间 × 每个产品
+一行）或 JSON。
 
 ### 在 Railway 的容器里跑脚本（本机连不上 fish.audio 时）
 
@@ -450,7 +470,14 @@ server/
   rooms.js             房间、角色、设备（朗读 / 环境音 / 收音）、分配、换房间、设置的读写
   importer.js          批量导入：读文件里的要求，挑口音音色、配房间、自动命名
   auth.js              Google 登录（OAuth 授权码流程）、会话 cookie、建房 / 导入的登录要求
-  api.js               HTTP 接口（建房、批量导入、上传、音频文件）
+  api.js               HTTP 接口（建房、批量导入、上传、音频文件、报告）
+  llm.js               判定模型调用（OpenRouter structured outputs，带重试）
+  reference.js         每个房间从脚本抽一次的评估参考：实体词 + 带重要度的信息单元
+  judge.js             Transcript 评估：EWER / UER / WDER / 语言 / WER
+  summaryEval.js       Summary + Action items 评估：逐条结论 → Precision / Recall / F1 / Critical
+  evaluate.js          给一个产品同时跑转录和摘要评估
+  report.js            综合报告：代码汇总、配对比较、分组、AI 总结、下载
+  lang.js              语种识别（整段 / 逐行）
   realtime.js          Socket.IO：实时状态、房主操作、开播握手
 lib/                   前端：socket hook、Web Audio 引擎、时钟同步、YouTube 环境音
 components/            上传器、角色卡、设备面板、基调设置、台词、开场面板

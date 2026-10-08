@@ -6,10 +6,11 @@ import { api } from '@/lib/api';
 import { createdRoomIds, forgetRoom, getHostToken, recentRooms, RECENT_LIMIT } from '@/lib/identity';
 import { clampTitle, titleWeight, TITLE_MAX_WEIGHT } from '@/lib/roomName';
 import type { RoomSummary } from '@/lib/types';
+import { ReportsPanel } from './ReportsPanel';
 
 const PAGE_SIZE = 100;
 
-type Tab = 'mine' | 'recent';
+type Tab = 'mine' | 'recent' | 'reports';
 
 /**
  * 首页右栏的 Rooms：
@@ -126,7 +127,15 @@ export function RoomList({ refreshKey }: { refreshKey: number }) {
         <button className={tab === 'recent' ? 'active' : ''} onClick={() => setTab('recent')}>
           Recent{recent ? ` (${recent.length})` : ''}
         </button>
+        <button className={tab === 'reports' ? 'active' : ''} onClick={() => setTab('reports')}>
+          Reports
+        </button>
       </div>
+
+      {tab === 'reports' ? (
+        <ReportsPanel rooms={mine ?? []} />
+      ) : (
+      <>
 
       <p className="sub" style={{ marginTop: -4 }}>
         {tab === 'mine'
@@ -228,6 +237,9 @@ export function RoomList({ refreshKey }: { refreshKey: number }) {
           </div>
           {pager}
         </>
+      )}
+
+      </>
       )}
 
       {error && (

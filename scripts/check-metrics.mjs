@@ -475,128 +475,103 @@ t('7000 token 走近似路径', long.wer.approximate === true);
 t(`且足够快（${Date.now() - t0}ms）`, Date.now() - t0 < 5000);
 
 // ---------------------------------------------------------------- 11
-group('11) 端到端：两个裁判的证据合并并标注来源');
-const FINDINGS = {
-  'openai/gpt-5.6-sol': {
-    missingContent: [
-      {
-        hunk: 1,
-        reference: 'we should ship Quicksilver on Friday',
-        candidate: '(nothing)',
-        severity: 'critical',
-        why: 'The ship date never appears.',
-      },
-    ],
-    meaningFlips: [
-      {
-        hunk: 2,
-        reference: "I don't think the quota is approved",
-        candidate: 'I think the quota is approved',
-        severity: 'critical',
-        why: 'Reverses whether the quota is approved.',
-      },
-    ],
-    summary: 'Dropped the ship date and flipped the quota.',
-  },
-  'anthropic/claude-opus-5': {
-    // 同一处，但引文略有不同 —— 应该被合并
-    missingContent: [
-      {
-        hunk: -1,
-        reference: 'should ship Quicksilver on Friday',
-        candidate: '(nothing)',
-        severity: 'minor',
-        why: 'The commitment to Friday is gone entirely, so nobody knows the date.',
-      },
-      {
-        hunk: 5,
-        reference: 'the budget was cut',
-        candidate: '(nothing)',
-        severity: 'minor',
-        why: 'Minor context loss.',
-      },
-    ],
-    meaningFlips: [],
-    summary: 'Mostly the missing ship date.',
-  },
-};
+group('11) EWER：只看实体词（文档里的例子）');
+{
+  const m = codeMetrics({
+    reference: 'Alice: Paul went to the Yunlangu building to interview Zoom.',
+    candidate: 'Speaker 1: Palo went to the building to interview Zoom.',
+    entities: ['Paul', 'Yunlangu', 'Zoom'],
+  });
+  t('EWER = (1 + 1 + 0) / 3 = 66.7%', m.ewer.ewer === 66.7, JSON.stringify(m.ewer));
+  t('S = 1（Paul → Palo）', m.ewer.substitutions === 1);
+  t('D = 1（Yunlangu 漏了）', m.ewer.deletions === 1);
+  t('N = 3', m.ewer.occurrences === 3);
+  t('用的是脚本里抽出的实体表', m.ewer.source === 'reference');
+  t('普通词全对也不影响 EWER（它们不在分母里）', m.wer.wer > 0 && m.ewer.occurrences === 3);
 
-let captured = null;
+  const fallback = codeMetrics({
+    reference: 'Alice: We met Priya at Acme yesterday.',
+    candidate: 'Speaker 1: We met Pria at Acme yesterday.',
+  });
+  t('没有实体表时退回自动识别的专有名词', fallback.ewer.source === 'auto' && fallback.ewer.ewer === 50,
+    JSON.stringify(fallback.ewer));
+}
+
+group('12) 逐行语言正确性（产品把一句拆成几行也能对上）');
+{
+  const split = codeMetrics({
+    reference: 'Alice: We should ship the new onboarding flow next week after the review.\nBob: 我们先看一下上周的数据再决定。',
+    candidate:
+      'Speaker 1: We should ship the new onboarding flow.\nSpeaker 1: Next week after the review.\nSpeaker 2: 我们先看一下上周的数据。\nSpeaker 2: 再决定。',
+    language: 'en',
+  });
+  t('★ 一句被拆成两行，仍按脚本的一行算，两行都对', split.languageCheck.checkedLines === 2 &&
+    split.languageCheck.wrongLines === 0, JSON.stringify(split.languageCheck));
+  t('中英混说：每行按自己的语种比', split.languageCheck.correctness === 100);
+
+  const translated = codeMetrics({
+    reference: 'Alice: 我们明天上午十点开会讨论预算问题。\nBob: 好的，我会准备好上季度的数据。',
+    candidate: 'Speaker 1: 我们明天上午十点开会讨论预算问题。\nSpeaker 2: OK, I will prepare the data from last quarter for everyone.',
+    language: 'zh',
+  });
+  t('★ 被转成别的语言的那一行判错', translated.languageCheck.wrongLines === 1 &&
+    translated.languageCheck.mismatches[0].line === 2, JSON.stringify(translated.languageCheck));
+  t('语言正确率 50%', translated.languageCheck.correctness === 50);
+
+  const dropped = codeMetrics({
+    reference: 'Alice: First line here today.\nBob: Second line here today.',
+    candidate: 'Speaker 1: First line here today.',
+    language: 'en',
+  });
+  t('整行漏掉的不算语言错误（那是 WER / UER 的事）', dropped.languageCheck.wrongLines === 0);
+}
+
+group('13) 端到端：gradeTranscript 的主指标');
+let uerPrompt = null;
 const fake = http.createServer((req, res) => {
   let body = '';
   req.on('data', (c) => (body += c));
   req.on('end', () => {
     const p = JSON.parse(body);
-    if (!captured) captured = p;
+    uerPrompt = p;
+    // 每个错误都判「意思变了」(1)
+    const ids = [...p.messages[1].content.matchAll(/id (\d+):/g)].map((m) => Number(m[1]));
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(
-      JSON.stringify({
-        choices: [{ message: { content: JSON.stringify(FINDINGS[p.model]) } }],
-        usage: { total_tokens: 1 },
-      })
-    );
+    res.end(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({ scores: ids.map((id) => ({ id, score: 1, reason: 'changed' })) }) } }],
+      usage: { total_tokens: 1 },
+    }));
   });
 });
 await new Promise((r) => fake.listen(0, r));
 process.env.OPENROUTER_BASE_URL = `http://127.0.0.1:${fake.address().port}`;
 process.env.OPENROUTER_API_KEY = 'sk-test-0123456789abcdefghij';
 
-const { gradeTranscript, QUESTIONS } = await import('../server/judge.js');
-
-t('只剩 2 个问题交给 LLM',
-  QUESTIONS.map((q) => q.key).join(',') === 'missingContent,meaningFlips',
-  QUESTIONS.map((q) => q.key).join(','));
-
+const { gradeTranscript } = await import('../server/judge.js');
 const graded = await gradeTranscript({
-  reference: "Alice: I don't think the quota is approved.\nBob: We should ship Quicksilver on Friday.",
-  candidate: 'Speaker 1: I think the quota is approved.',
-  glossary: 'Quicksilver',
+  reference: "Alice: I don't think the Quicksilver quota is approved.\nBob: We should ship on Friday.",
+  candidate: 'Speaker 1: I think the Quicksilver quota is approved.\nSpeaker 2: We should ship on Friday.',
+  entities: ['Quicksilver'],
+  language: 'en',
 });
+const h = graded.headline;
+t('主指标齐全：EWER / UER / WDER / 语言 / WER', ['ewer', 'uer', 'wder', 'language', 'wer'].every((k) => k in h),
+  JSON.stringify(h));
+t('EWER 0（实体都对）', h.ewer === 0);
+t('★ UER 50%：两句里一句意思变了', h.uer === 50, String(h.uer));
+t('WDER 0（说话人都对）', h.wder === 0, String(h.wder));
+t('语言 100%', h.language === 100);
+t('只用一个判定模型', uerPrompt.model === 'anthropic/claude-opus-5', uerPrompt.model);
+t('不再有两个裁判的证据和加权 WER', !('evidence' in graded) && !('judges' in graded) && !graded.metrics.weighted);
+t('中间产物不进结果', graded.metrics.utterances === undefined && graded.metrics.hunks === undefined);
 
-t('两个裁判都跑了', graded.judges.length === 2, `${graded.judges.length}`);
-t('结果里带 code 指标', !!graded.metrics?.weighted);
-t('diff 片段没被存进结果里（只是喂模型的中间产物）', graded.metrics.hunks === undefined);
-t('线索保留下来了', Array.isArray(graded.metrics.leads) && graded.metrics.leads.length > 0);
-t('结果里没有任何分数',
-  !JSON.stringify(graded.evidence).includes('"score"'));
-
-const mc = graded.evidence.missingContent;
-t('missingContent 合并成 2 条', mc.length === 2, `${mc.length}`);
-t('同一处被两个裁判都抓到 → 标 both 且排最前',
-  mc[0].sources.length === 2, JSON.stringify(mc[0].sources));
-t('严重程度取高的那个（critical 胜 minor）', mc[0].severity === 'critical', mc[0].severity);
-t('只有一个裁判报的那条标 1 个来源', mc[1].sources.length === 1, JSON.stringify(mc[1].sources));
-t('meaningFlips 只有 GPT 报',
-  graded.evidence.meaningFlips.length === 1 &&
-    graded.evidence.meaningFlips[0].sources.join() === 'gpt',
-  JSON.stringify(graded.evidence.meaningFlips));
-t('critical 计数 = 2', graded.critical === 2, `${graded.critical}`);
-
-group('12) 喂给模型的 prompt');
-const sent = captured.messages[1].content;
-t('给了完整真值', sent.includes('THE SCRIPT'));
-t('实测数字作为事实写进去了', sent.includes('ALREADY MEASURED'));
-t('带上了加权错误率', sent.includes('Weighted'));
-t('带上了 diff 片段', sent.includes('DIFF HUNKS') && sent.includes('⟦'));
-t('带上了 code 标出的否定词线索', sent.includes('negation-dropped'));
-t('没有把完整候选再塞一遍', !sent.includes('CANDIDATE ('));
-t('schema 里只有两个问题',
-  Object.keys(captured.response_format.json_schema.schema.properties).sort().join(',') ===
-    'meaningFlips,missingContent,summary',
-  Object.keys(captured.response_format.json_schema.schema.properties).join(','));
-t('要求的是证据条目而不是分数',
-  captured.response_format.json_schema.schema.properties.missingContent.type === 'array');
-
-group('13) 裁判挂了，实测部分照样出结果');
 fake.close();
 const noJudge = await gradeTranscript({
   reference: 'Alice: I think the quota is approved.',
   candidate: 'Speaker 1: I think the quota is approved.',
 });
-t('不抛错', true);
-t('标记裁判不可用', noJudge.judgesUnavailable === true);
-t('实测指标仍在', noJudge.metrics.wer.wer === 0);
-t('两条失败原因都带上了', noJudge.failures.length === 2, `${noJudge.failures.length}`);
+t('★ 判定模型挂了，代码算的指标照样出', noJudge.headline.wer === 0 && noJudge.headline.ewer !== undefined);
+t('UER 标为不可用', noJudge.uer.unavailable === true || noJudge.uer.uer === 0, JSON.stringify(noJudge.uer));
 
 console.log(`\n${pass} 项通过，${fail} 项失败\n`);
 process.exit(fail ? 1 : 0);

@@ -20,13 +20,18 @@ import {
 } from './rooms.js';
 import { jobStatus } from './generate.js';
 import { apiKeyProblem, TTS_MODELS, DEFAULT_TTS_MODEL } from './tts.js';
+import { PRODUCTS, apiKeyProblem as judgeKeyProblem } from './judge.js';
+import { EVAL_MODEL } from './llm.js';
 import {
-  PRODUCTS,
-  QUESTIONS as JUDGE_QUESTIONS,
-  JUDGES,
-  apiKeyProblem as judgeKeyProblem,
-} from './judge.js';
-import { UER_MODEL } from './uer.js';
+  MAX_REPORT_ROOMS,
+  allowedRoomIds,
+  createReport,
+  listReports,
+  getReport,
+  deleteReport,
+  reportMarkdown,
+  reportCsv,
+} from './report.js';
 import { importTranscript, MAX_IMPORT_FILES, MAX_IMPORT_FILE_BYTES } from './importer.js';
 
 const HASH_RE = /^[a-f0-9]{32}$/;
@@ -67,10 +72,9 @@ export function createApiRouter({ broadcast }) {
       ttsProblem: problem,
       compare: {
         products: PRODUCTS,
-        questions: JUDGE_QUESTIONS.map((q) => ({ key: q.key, label: q.label, ask: q.ask })),
-        judges: JUDGES.map((j) => ({ id: j.id, label: j.label, model: j.model })),
         problem: judgeKeyProblem(),
-        uerModel: UER_MODEL(),
+        // 唯一的判定模型：抽参考、判 UER、判摘要都用它；所有分数由代码算
+        model: EVAL_MODEL(),
       },
     });
   });
@@ -112,6 +116,55 @@ export function createApiRouter({ broadcast }) {
       }
     });
     res.json({ results });
+  });
+
+  // ---------------- 综合报告 ----------------
+  // 报告属于生成它的账号；只能选自己的房间（最多 1000 个）
+  router.get('/reports', requireLogin, (req, res) => {
+    res.json({ reports: listReports(req.user?.id ?? null), maxRooms: MAX_REPORT_ROOMS });
+  });
+
+  router.post('/reports', requireLogin, (req, res) => {
+    const requested = Array.isArray(req.body?.roomIds) ? req.body.roomIds : [];
+    if (requested.length > MAX_REPORT_ROOMS) {
+      return res.status(400).json({ error: `At most ${MAX_REPORT_ROOMS} rooms per report` });
+    }
+    const roomIds = allowedRoomIds(requested, req.user?.id ?? null);
+    try {
+      const id = createReport({
+        ownerId: req.user?.id ?? null,
+        roomIds,
+        title: req.body?.title,
+        scoreMissing: req.body?.scoreMissing === true,
+      });
+      res.json({ id, rooms: roomIds.length, skipped: requested.length - roomIds.length });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  router.get('/reports/:rid', requireLogin, (req, res) => {
+    const report = getReport(req.params.rid, req.user?.id ?? null);
+    if (!report) return res.status(404).json({ error: 'Report not found' });
+    res.json({ report });
+  });
+
+  router.get('/reports/:rid/download', requireLogin, (req, res) => {
+    const report = getReport(req.params.rid, req.user?.id ?? null);
+    if (!report) return res.status(404).json({ error: 'Report not found' });
+    const format = ['md', 'csv', 'json'].includes(req.query.format) ? req.query.format : 'md';
+    const base = `report-${report.id}`;
+    const body =
+      format === 'csv' ? reportCsv(report) : format === 'json' ? JSON.stringify(report, null, 2) : reportMarkdown(report);
+    const type = { md: 'text/markdown', csv: 'text/csv', json: 'application/json' }[format];
+    res.setHeader('Content-Type', `${type}; charset=utf-8`);
+    res.setHeader('Content-Disposition', `attachment; filename="${base}.${format}"`);
+    res.send(body);
+  });
+
+  router.delete('/reports/:rid', requireLogin, (req, res) => {
+    if (!deleteReport(req.params.rid, req.user?.id ?? null)) return res.status(404).json({ error: 'Report not found' });
+    res.json({ ok: true });
   });
 
   // 首页那个「我创建的房间」列表用的。房间号本身就是凭证，所以不另做鉴权 ——

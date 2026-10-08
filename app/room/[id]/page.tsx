@@ -103,7 +103,7 @@ export default function RoomPage() {
   const captureOnly = isCaptureDevice && !isHost;
   // 有任何产品已经打过分 → 谁都能点进去看；一个都没有 → 还没什么可看的，
   // 只让能编辑的人看到入口
-  const hasAnyCompareResult = state?.comparisons.some((c) => c.result) ?? false;
+  const hasAnyCompareResult = state?.comparisons.some((c) => c.result || c.summaryResult) ?? false;
 
   // 一台设备被设成收音设备的那一刻，直接弹出 Compare 并停在 Input，等着贴转录和摘要
   const wasCapture = useRef(false);
@@ -433,6 +433,7 @@ export default function RoomPage() {
           comparisons={state.comparisons}
           referenceLineCount={state.lineCount}
           glossary={state.settings.glossary}
+          reference={state.reference}
           initialTab={compareTab}
           onPut={actions.putComparison}
           onScore={actions.scoreComparison}

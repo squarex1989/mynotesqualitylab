@@ -19,6 +19,9 @@
 
 import path from 'node:path';
 import { parseTranscript } from './parse.js';
+import { detectLanguage } from './lang.js';
+
+export { detectLanguage };
 import { voices } from './voices.js';
 import {
   createRoom,
@@ -26,6 +29,7 @@ import {
   setTranscript,
   updateRoomSettings,
   setGlossary,
+  setRoomLanguage,
   normalizeTitle,
   titleWeight,
   TITLE_MAX_WEIGHT,
@@ -124,43 +128,10 @@ const LANGUAGE_NAMES = [
   ['nl', /^(nl|dutch|nederlands|荷兰语)$/i],
 ];
 
-const STOPWORDS = {
-  en: ['the', 'and', 'is', 'you', 'that', 'to', 'of', 'we', 'it', 'this', 'what', 'i'],
-  fr: ['le', 'la', 'les', 'et', 'est', 'vous', 'nous', 'que', 'pas', 'une', 'je', 'des'],
-  de: ['der', 'die', 'das', 'und', 'ist', 'nicht', 'wir', 'ich', 'sie', 'ein', 'zu', 'es'],
-  es: ['el', 'los', 'que', 'y', 'es', 'no', 'una', 'por', 'para', 'está', 'las', 'pero'],
-  pt: ['o', 'os', 'que', 'não', 'é', 'uma', 'para', 'você', 'está', 'com', 'mas', 'isso'],
-  it: ['il', 'che', 'non', 'è', 'per', 'una', 'sono', 'gli', 'della', 'ma', 'questo', 'io'],
-  nl: ['de', 'het', 'een', 'en', 'niet', 'dat', 'ik', 'je', 'wij', 'van', 'is', 'we'],
-};
 
 function languageFromName(raw) {
   const v = String(raw || '').trim();
   return LANGUAGE_NAMES.find(([, re]) => re.test(v))?.[0] ?? null;
-}
-
-/** 没写语言时按内容猜：有假名是日语，有汉字是中文，拉丁字母按常用词打分 */
-export function detectLanguage(text) {
-  const sample = String(text || '').slice(0, 20000);
-  const kana = (sample.match(/[぀-ヿ]/g) || []).length;
-  const han = (sample.match(/[一-鿿]/g) || []).length;
-  const latin = (sample.match(/[a-zA-ZÀ-ɏ]/g) || []).length;
-  if (kana > 10 && kana * 10 > han) return 'ja';
-  if (han > latin / 3 && han > 10) return kana > 10 ? 'ja' : 'zh';
-
-  const words = sample.toLowerCase().match(/[\p{L}]+/gu) || [];
-  const freq = new Map();
-  for (const w of words) freq.set(w, (freq.get(w) || 0) + 1);
-  let best = 'en';
-  let bestScore = 0;
-  for (const [lang, list] of Object.entries(STOPWORDS)) {
-    const score = list.reduce((n, w) => n + (freq.get(w) || 0), 0);
-    if (score > bestScore) {
-      best = lang;
-      bestScore = score;
-    }
-  }
-  return best;
 }
 
 const ORDER_TOKEN = [
@@ -487,6 +458,7 @@ export function importTranscript({ name, text }, { ownerId = null } = {}) {
   const { id, hostToken } = createRoom({ title: plan.title, ownerId });
   try {
     setTranscript(id, plan.parsed, { voices: plan.voicePlan, config: { pace: plan.pace } });
+    setRoomLanguage(id, plan.language);
     updateRoomSettings(id, plan.settings);
     if (plan.glossary) setGlossary(id, plan.glossary.replace(/\s*[,，;；]\s*/g, '\n'));
   } catch (err) {

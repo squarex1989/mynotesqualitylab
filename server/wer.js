@@ -135,7 +135,7 @@ const clean = (s) =>
  * 返回的都是平行数组，下标一致；tokens 是纯字符串数组，对齐时比较的就是它，
  * 其余都是元信息。
  */
-export function analyze(text) {
+export function analyze(text, forceMode = null) {
   const rawLines = String(text || '')
     .replace(/\r\n?/g, '\n')
     .split('\n');
@@ -160,7 +160,8 @@ export function analyze(text) {
   const joined = bodies.map((b) => b.body).join('\n');
   const cjkCount = (joined.match(new RegExp(CJK.source, 'gu')) || []).length;
   const letterCount = (joined.match(/[A-Za-z0-9]/g) || []).length;
-  const mode = cjkCount > letterCount ? 'char' : 'word';
+  // 候选跟着真值的模式走：两边切法不一致就没法对齐（产品把中文录成英文、或反过来时尤其如此）
+  const mode = forceMode || (cjkCount > letterCount ? 'char' : 'word');
 
   const tokens = [];
   const raw = [];
@@ -214,9 +215,26 @@ export function analyze(text) {
           if (ch && CJK.test(ch)) push(i, 1);
         }
       } else {
+        // 按词切；夹在里面的中日文仍按字切（中英混说、或者产品录成了另一种语言）
         const re = /[^ ]+/g;
         let m;
-        while ((m = re.exec(lower))) push(m.index, m[0].length);
+        while ((m = re.exec(lower))) {
+          if (!CJK.test(m[0])) {
+            push(m.index, m[0].length);
+            continue;
+          }
+          let runStart = -1;
+          for (let i = 0; i <= m[0].length; i++) {
+            const ch = m[0][i];
+            const isRun = ch && !CJK.test(ch);
+            if (isRun && runStart < 0) runStart = i;
+            if (!isRun && runStart >= 0) {
+              push(m.index + runStart, i - runStart);
+              runStart = -1;
+            }
+            if (ch && CJK.test(ch)) push(m.index + i, 1);
+          }
+        }
       }
     }
   });
@@ -377,7 +395,7 @@ function alignChunked(ref, hyp) {
  */
 export function alignTexts(reference, candidate) {
   const ref = analyze(reference);
-  const hyp = analyze(candidate);
+  const hyp = analyze(candidate, ref.mode);
   const n = ref.tokens.length;
 
   if (!n) {

@@ -5,6 +5,7 @@ import next from 'next';
 import { db, DATA_DIR, storageInfo } from './server/db.js';
 import { createApiRouter } from './server/api.js';
 import { createAuthRouter, authConfigured } from './server/auth.js';
+import { failInterruptedReports } from './server/report.js';
 import { attachRealtime } from './server/realtime.js';
 import { apiKeyProblem, DEFAULT_TTS_MODEL } from './server/tts.js';
 
@@ -14,6 +15,10 @@ const port = Number(process.env.PORT) || 3000;
 // 上一次进程留下的“在线设备”和“播放中”都是假的，启动时清掉
 db.exec("UPDATE devices SET online = 0");
 db.exec("UPDATE rooms SET status = 'idle'");
+// 进程重启时跑到一半的评估不会再有结果了，别让它们永远停在「Scoring…」
+db.exec("UPDATE comparisons SET state = 'failed', error = 'Interrupted by a server restart' WHERE state = 'scoring'");
+db.exec("UPDATE comparisons SET summary_state = 'failed', summary_error = 'Interrupted by a server restart' WHERE summary_state = 'scoring'");
+failInterruptedReports();
 
 const nextApp = next({ dev });
 const handle = nextApp.getRequestHandler();

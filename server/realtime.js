@@ -22,14 +22,14 @@ import {
   ambienceUrlFor,
   getComparisons,
   putComparison,
-  setComparisonState,
   getDevices,
   setDeviceCapture,
   moveDevicesToRoom,
   setGlossary,
-  referenceTranscript,
 } from './rooms.js';
-import { gradeTranscript, isProduct } from './judge.js';
+import { isProduct } from './judge.js';
+import { evaluateProduct } from './evaluate.js';
+import { getCachedReference } from './reference.js';
 import { userFromCookieHeader } from './auth.js';
 import { ensureGeneration, jobStatus, genEvents } from './generate.js';
 import { buildSchedule } from './schedule.js';
@@ -81,6 +81,9 @@ function snapshot(roomId) {
     audioReady: audioReady.get(`${roomId}:${d.id}`) === true,
   }));
   state.comparisons = getComparisons(roomId);
+  // 从脚本抽出来的评估参考（实体词、应有的信息单元），Result 页展示用
+  const ref = getCachedReference(roomId);
+  state.reference = ref ? { entities: ref.entities, units: ref.units, model: ref.model } : null;
   state.pausedIdx = pausedAt.has(roomId) ? pausedAt.get(roomId) : null;
   return { state, progress: jobStatus(roomId) };
 }
@@ -214,33 +217,12 @@ export function attachRealtime(httpServer) {
       })
     );
 
+    // 转录和摘要一起评（各自有内容才评），结果分开存
     socket.on(
       'compare:score',
       compareOnly(async ({ product }) => {
         if (!isProduct(product)) throw new Error('Unknown product');
-
-        const reference = referenceTranscript(roomId);
-        if (!reference.trim()) throw new Error('This room has no transcript to compare against');
-
-        const row = getComparisons(roomId).find((c) => c.product === product);
-        if (!row?.transcript?.trim()) throw new Error('Paste that product\'s transcript first');
-        // 摘要的评估逻辑还没做，这里只给转录打分
-        if (row.state === 'scoring') return; // 已经在跑了
-
-        setComparisonState(roomId, product, 'scoring');
-        broadcast(roomId);
-
-        try {
-          const result = await gradeTranscript({
-            reference,
-            candidate: row.transcript,
-            glossary: getRoom(roomId)?.glossary || '',
-          });
-          setComparisonState(roomId, product, 'done', { result });
-        } catch (err) {
-          setComparisonState(roomId, product, 'failed', { error: err.message || String(err) });
-        }
-        broadcast(roomId);
+        await evaluateProduct(roomId, product, { onChange: () => broadcast(roomId) });
       })
     );
 

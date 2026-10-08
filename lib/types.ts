@@ -48,13 +48,10 @@ export interface RoomSummary {
 
 export interface CompareMeta {
   products: { id: string; label: string }[];
-  /** 留给 LLM 的两个问题；其余维度都由 code 算 */
-  questions: { key: string; label: string; ask: string }[];
-  judges: { id: string; label: string; model: string }[];
   /** Non-null when OPENROUTER_API_KEY is missing or looks wrong */
   problem: string | null;
-  /** 判 UER 三档用的模型 */
-  uerModel?: string;
+  /** The single judge model (reference extraction, UER, summary verdicts) */
+  model: string;
 }
 
 export interface JudgeResult {
@@ -206,24 +203,139 @@ export interface UerResult {
   failures?: string[];
 }
 
+/** EWER: WER restricted to entity words */
+export interface EwerReport {
+  ewer: number | null;
+  entities: number;
+  occurrences: number;
+  substitutions: number;
+  deletions: number;
+  /** reference = entities extracted from the script; auto = capitalisation fallback */
+  source: 'reference' | 'auto';
+  errors: TermOutcome[];
+}
+
+export interface LanguageCheck {
+  checkedLines: number;
+  wrongLines: number;
+  correctness: number | null;
+  mismatches: { line: number; expected: string; got: string; script: string; transcript: string }[];
+}
+
+/** Transcript evaluation (version 2) */
 export interface CompareResult {
-  metrics: CodeMetrics;
+  version?: number;
+  metrics: CodeMetrics & { ewer?: EwerReport; languageCheck?: LanguageCheck };
   uer?: UerResult;
-  evidence: Record<string, Finding[]>;
-  critical?: number;
-  judges: JudgeResult[];
-  failures: { judge?: string; label: string; message: string }[];
-  judgesUnavailable?: boolean;
+  headline?: {
+    ewer?: number | null;
+    uer?: number | null;
+    wder?: number | null;
+    wderUnlabeled?: boolean;
+    language?: number | null;
+    wer?: number | null;
+  };
+}
+
+export type Verdict = 'supported' | 'partially_supported' | 'unsupported' | 'contradicted' | 'irrelevant';
+
+export interface SummaryClaim {
+  index: number;
+  claim: string;
+  section: string;
+  verdict: Verdict;
+  evidenceLines: number[];
+  evidence: string;
+  errorType: string;
+  critical: boolean;
+  criticalType: string;
+}
+
+export interface ActionItemEval {
+  text: string;
+  owner: string;
+  due: string;
+  deliverable: string;
+  status: string;
+  valid: boolean;
+  invalidReason: string;
+  matchedUnit: string;
+  checks: Record<'owner' | 'due' | 'deliverable' | 'status', string>;
+}
+
+/** Summary + action item evaluation (version 2) */
+export interface SummaryResult {
+  version: number;
+  model?: string;
+  headline: {
+    precision: number | null;
+    recall: number | null;
+    f1: number | null;
+    critical: boolean;
+    criticalCount: number;
+    languageOk: boolean | null;
+    actionPrecision: number | null;
+    actionRecall: number | null;
+    actionF1: number | null;
+  };
+  precision: { claims: number; byVerdict: Record<Verdict, number> };
+  recall: { units: number; byType: Record<string, { recall: number | null; units: number }> };
+  critical: { claims: number[]; omissions: string[]; types: Record<string, number> };
+  errorTypes: Record<string, number>;
+  diagnostics: {
+    nameCorrectness: number | null;
+    numberDateCorrectness: number | null;
+    decisionCorrectness: number | null;
+    attributionCorrectness: number | null;
+    terminologyCorrectness: number | null;
+    language: { expected: string | null; got: string | null };
+  };
+  actionItems: {
+    extracted: number;
+    valid: number;
+    referenceActions: number;
+    matched: number;
+    attributeAccuracy: Record<'owner' | 'due' | 'deliverable' | 'status', number | null>;
+    allAttributesCorrect: number | null;
+    unsupportedAttributeRate: number | null;
+    criticalCount: number;
+    items: ActionItemEval[];
+    missed: string[];
+  };
+  claims: SummaryClaim[];
+  units: { id: string; type: string; importance: number; text: string; coverage: 'covered' | 'partial' | 'missing' }[];
+  templateAlignment: { evaluated: boolean };
+}
+
+export interface ReferenceUnit {
+  id: string;
+  type: string;
+  importance: number;
+  text: string;
+  lines: number[];
+  owner: string;
+  due: string;
+  deliverable: string;
+  status: string;
+}
+
+export interface RoomReference {
+  entities: { text: string; type: string }[];
+  units: ReferenceUnit[];
+  model?: string;
 }
 
 export interface Comparison {
   product: string;
   transcript: string;
-  /** The product's meeting summary. Evaluation for it is not built yet. */
+  /** The product's meeting summary */
   summary: string;
   result: CompareResult | null;
   state: 'idle' | 'scoring' | 'done' | 'failed';
   error: string | null;
+  summaryResult: SummaryResult | null;
+  summaryState: 'idle' | 'scoring' | 'done' | 'failed';
+  summaryError: string | null;
   updatedAt: number;
 }
 
@@ -295,6 +407,91 @@ export interface RoomState {
   comparisons: Comparison[];
   /** Paused on this line (idx); resuming starts from the beginning of it */
   pausedIdx?: number | null;
+  /** Evaluation reference extracted from the script (cached per room) */
+  reference?: RoomReference | null;
+}
+
+export interface ReportListItem {
+  id: string;
+  title: string;
+  roomCount: number;
+  state: 'running' | 'done' | 'failed';
+  progress: { phase: string; done: number; total: number } | null;
+  error: string | null;
+  createdAt: number;
+  finishedAt: number | null;
+}
+
+export interface Stat {
+  n: number;
+  mean: number | null;
+  median: number | null;
+  sd: number | null;
+  ci: [number, number] | null;
+}
+
+export interface ReportMetric {
+  key: string;
+  label: string;
+  part: 'transcript' | 'summary';
+  better: 'lower' | 'higher';
+}
+
+export interface ReportData {
+  rooms: number;
+  products: { id: string; label: string }[];
+  baseline: string;
+  metrics: ReportMetric[];
+  overall: Record<string, Record<string, Stat>>;
+  paired: Record<
+    string,
+    {
+      rooms: number;
+      means: Record<string, number | null>;
+      vsBaseline: Record<
+        string,
+        { meanDiff: number | null; ci: [number, number] | null; n: number; otherBetter: number; baselineBetter: number; ties: number; stable: boolean }
+      >;
+    }
+  >;
+  groups: { key: string; title: string; buckets: { value: string; rooms: number; metrics: Record<string, Record<string, Stat>> }[] }[];
+  errors: Record<
+    string,
+    {
+      summaries: number;
+      errorTypes: Record<string, number>;
+      criticalTypes: Record<string, number>;
+      topEntityErrors: { term: string; errors: number; dropped: number; rooms: number; gotAs: { got: string; count: number }[] }[];
+    }
+  >;
+  worst: Record<
+    string,
+    {
+      highestEwer: { id: string; title: string | null; value: number }[];
+      highestUer: { id: string; title: string | null; value: number }[];
+      lowestF1: { id: string; title: string | null; value: number }[];
+      withCritical: { id: string; title: string | null; count: number }[];
+    }
+  >;
+  missing: Record<string, { transcript: string[]; summary: string[] }>;
+  perRoom: {
+    id: string;
+    title: string | null;
+    language: string;
+    speakers: number;
+    order: string;
+    noise: string;
+    accent: string;
+    accents: string[];
+    values: Record<string, Record<string, number | null>>;
+  }[];
+}
+
+export interface Report extends ReportListItem {
+  roomIds: string[];
+  options: { scoreMissing?: boolean };
+  data: ReportData | null;
+  aiSummary: string | null;
 }
 
 export interface Progress {
