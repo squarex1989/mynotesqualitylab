@@ -164,44 +164,32 @@
       "bright"
     ]
   },
-  "0dad1a78cb8c405da0214a9b408804bb": {
-    "title": "希專業版",
+  "faccba1a8ac54016bcfc02761285e67f": {
+    "title": "温柔动听女声",
     "tags": [
       "female",
-      "middle-aged",
+      "young",
       "narration",
-      "educational",
-      "medium",
       "soft",
-      "warm",
       "calm",
-      "measured",
+      "relaxed",
       "gentle",
-      "clear",
-      "neutral-tone",
-      "expressive",
-      "narrative"
+      "empathetic",
+      "Soothing"
     ]
   },
-  "b493b4c72d5443bd8f024fb15095d7ef": {
-    "title": "宁静心语",
+  "aebaa2305aa2452fbdc8f41eec852a79": {
+    "title": "雷军",
     "tags": [
       "male",
       "middle-aged",
-      "narration",
-      "educational",
-      "entertainment",
-      "calm",
-      "relaxed",
-      "measured",
-      "friendly",
-      "gentle",
-      "empathetic",
-      "clear",
-      "smooth",
-      "warm",
-      "storytelling",
-      "narrative"
+      "advertisement",
+      "social-media",
+      "energetic",
+      "confident",
+      "crisp",
+      "dynamic",
+      "Mandarin"
     ]
   },
   "ba08f02741494edfb0f2ec76ece4090b": {
@@ -269,39 +257,37 @@
       "fast-paced"
     ]
   },
-  "ac60ac3cb28643ecaa84a7cb57942629": {
-    "title": "国恒",
+  "29a7eea9ed484ef6b175da9bcfb49979": {
+    "title": "自然流男",
     "tags": [
-      "male",
-      "middle-aged"
-    ]
-  },
-  "3baad3a50f124fb79e20005ebd0efd1c": {
-    "title": "歌手老公男",
-    "tags": [
-      "neutral",
-      "young",
-      "conversational",
-      "narration",
-      "social-media",
-      "expressive",
-      "animated",
-      "friendly",
-      "clear",
-      "medium",
-      "smooth",
-      "energetic",
-      "cheerful",
-      "storytelling",
       "male",
       "middle-aged",
       "educational",
-      "calm",
-      "warm",
-      "confident",
-      "narrative",
+      "narration",
+      "conversational",
+      "smooth",
       "professional",
-      "measured"
+      "calm",
+      "Mandarin"
+    ]
+  },
+  "a1061d5c114249169f3484d95992902f": {
+    "title": "亲和男声",
+    "tags": [
+      "male",
+      "middle-aged",
+      "conversational",
+      "narration",
+      "educational",
+      "warm",
+      "calm",
+      "friendly",
+      "confident",
+      "clear",
+      "smooth",
+      "medium",
+      "expressive",
+      "professional"
     ]
   },
   "a47b7c53c4634f59ba947fb2665f81a9": {
