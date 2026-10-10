@@ -73,6 +73,13 @@ export default function RoomPage() {
 
   const myRows = state ? state.devices.filter((d) => d.id === deviceId).length : 0;
 
+  // 诊断行默认不显示（播放时那几个数字常常只是「还没轮到挂上时间线」，对用户是噪音）。
+  // 排查问题时在地址后面加 ?debug 打开。
+  const [debug, setDebug] = useState(false);
+  useEffect(() => {
+    setDebug(new URLSearchParams(window.location.search).has('debug'));
+  }, []);
+
   /**
    * 诊断行只在有异常时出现。
    *
@@ -255,7 +262,7 @@ export default function RoomPage() {
         </p>
       )}
 
-      {audioDiag && audioAnomaly && (
+      {debug && audioDiag && audioAnomaly && (
         <p className="tiny muted" style={{ fontFamily: 'var(--mono)', margin: '0 0 10px' }}>
           <button
             className="small ghost"

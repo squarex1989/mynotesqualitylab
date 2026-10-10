@@ -54,8 +54,14 @@ const ALL_VOICES = VOICE_LIBRARY.flatMap((c) => {
     accents,
     country: c.code,
     languages: [c.code],
+    defaultPace: v.pace === 'fast' ? 'fast' : 'normal',
   }));
 });
+
+/** 选中这个音色时默认的语速（voice-library 里标了 pace 的用它，其余 Normal） */
+export function defaultPaceFor(voiceId) {
+  return ALL_VOICES.find((v) => v.id === voiceId)?.defaultPace ?? 'normal';
+}
 
 const COUNTRIES = VOICE_LIBRARY.map((c) => ({
   code: c.code,
@@ -118,7 +124,7 @@ export function randomSpeakerConfig({ avoidVoices = [], rng = Math.random } = {}
   const all = voices();
   const fresh = all.filter((v) => !avoidVoices.includes(v.id));
   const voice = pick(fresh.length ? fresh : all, rng).id;
-  return { voice, config: { pace: 'normal' }, instructions: buildInstructions() };
+  return { voice, config: { pace: defaultPaceFor(voice) }, instructions: buildInstructions() };
 }
 
 /** 把任意输入规整成合法配置，非法值回落到第一个选项。 */

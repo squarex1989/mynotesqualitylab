@@ -6,6 +6,7 @@
 // scripts/fetch-voice-tags.mjs 从 fish.audio 按 id 拉取，不手写。
 // 想增删音色直接改这个文件，保持每个 id 全局唯一。
 
+// pace: 'fast' —— 这几个音色本身语速偏慢，选中时默认用 Fast（仍可手动改回 Normal）
 export const VOICE_LIBRARY = [
   {
     code: 'en',
@@ -28,13 +29,13 @@ export const VOICE_LIBRARY = [
     labelZh: '中文',
     voices: [
       { id: 'faccba1a8ac54016bcfc02761285e67f', label: 'Chinese 1' },
-      { id: 'aebaa2305aa2452fbdc8f41eec852a79', label: 'Chinese 2' },
+      { id: 'aebaa2305aa2452fbdc8f41eec852a79', label: 'Chinese 2', pace: 'fast' },
       { id: 'ba08f02741494edfb0f2ec76ece4090b', label: 'Chinese 3' },
       { id: '9a5ee67e97dd47d3ad3b99e93c1cdc14', label: 'Chinese 4' },
       { id: '301270e51a4a4ae0802fba4018047d81', label: 'Chinese 5' },
       { id: '0e14c1b6a85d4537aa1f48d99ad9817d', label: 'Chinese 6' },
-      { id: '29a7eea9ed484ef6b175da9bcfb49979', label: 'Chinese 7' },
-      { id: 'a1061d5c114249169f3484d95992902f', label: 'Chinese 8' },
+      { id: '29a7eea9ed484ef6b175da9bcfb49979', label: 'Chinese 7', pace: 'fast' },
+      { id: 'a1061d5c114249169f3484d95992902f', label: 'Chinese 8', pace: 'fast' },
     ],
   },
   {

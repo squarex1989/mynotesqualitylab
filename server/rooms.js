@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { db, AMBIENCE_DEFAULTS } from './db.js';
 import {
   randomSpeakerConfig,
+  defaultPaceFor,
   normalizeConfig,
   normalizeVoice,
   buildInstructions,
@@ -196,7 +197,10 @@ export function setTranscript(roomId, parsed, plan = {}) {
     for (const name of parsed.speakers) {
       const random = randomSpeakerConfig({ avoidVoices: used });
       const voice = plan.voices?.[name] ? normalizeVoice(plan.voices[name]) : random.voice;
-      const config = plan.config ? normalizeConfig({ ...random.config, ...plan.config }) : random.config;
+      // 语速默认跟着音色走；导入时明确要求了 Fast 才覆盖
+      const config = normalizeConfig({
+        pace: plan.config?.pace === 'fast' ? 'fast' : defaultPaceFor(voice),
+      });
       used.push(voice);
       insertSpeaker.run(roomId, name, voice, JSON.stringify(config), random.instructions);
     }
@@ -231,6 +235,8 @@ export function updateSpeaker(roomId, name, patch) {
   const config = patch.config !== undefined
     ? normalizeConfig({ ...JSON.parse(row.config), ...patch.config })
     : JSON.parse(row.config);
+  // 换了音色、且这次没有顺带指定语速：语速回到这个音色的默认值（中文 2/6/7 是 Fast）
+  if (voice !== row.voice && patch.config?.pace === undefined) config.pace = defaultPaceFor(voice);
 
   let custom = row.custom;
   let instructions;
