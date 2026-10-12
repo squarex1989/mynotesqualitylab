@@ -47,6 +47,19 @@ export function normalizeModel(model) {
   return TTS_MODELS.some((m) => m.id === model) ? model : DEFAULT_TTS_MODEL;
 }
 const MP3_BITRATE = Number(process.env.FISH_MP3_BITRATE) || 128;
+
+// 采样参数：音色稳定比表现力重要。
+//
+// 每句话是一次独立的 Fish 请求，请求之间没有任何关联（condition_on_previous_chunks 只管同一次请求
+// 内部，也没有 seed 可以固定）。默认 temperature / top_p 都是 0.7，同一个 reference_id 每次出来的
+// 音色、语气会有随机偏差，句子越短越明显 —— 而这些音频要被会议记录产品的 ASR 听，偏差大了会被
+// 当成不同的说话人（说话人分离出错）。所以压低：越低越稳，代价是语气更平。
+const clamp01 = (v, fallback) => (Number.isFinite(v) && v >= 0 && v <= 1 ? v : fallback);
+const envNum = (name) => (process.env[name] === undefined || process.env[name] === '' ? NaN : Number(process.env[name]));
+const TEMPERATURE = clamp01(envNum('FISH_TEMPERATURE'), 0.2);
+const TOP_P = clamp01(envNum('FISH_TOP_P'), 0.5);
+/** 进音频哈希：采样参数变了，已缓存的音频就不再命中，会按新参数重新合成 */
+const SAMPLING_ID = `t${TEMPERATURE}-p${TOP_P}`;
 // normal = 质量更好，balanced = 更快。朗读场景不在乎首字延迟，选质量
 const LATENCY = process.env.FISH_LATENCY || 'normal';
 
@@ -64,13 +77,13 @@ export function apiKeyProblem(key = process.env.FISH_API_KEY) {
 }
 
 /**
- * 音频的身份 = 模型 + 音色 + 风格标签 + 语速 + 文本。
+ * 音频的身份 = 模型 + 音色 + 风格标签 + 语速 + 采样参数 + 文本。
  * 任何一项变了就是另一个文件；都没变就直接命中缓存，不再调 API。
  */
 export function audioHash({ model, voice, instructions, speed = 1, text }) {
   return crypto
     .createHash('sha256')
-    .update(`${normalizeModel(model)}|${voice}|${instructions}|${speed}|${text}`)
+    .update(`${normalizeModel(model)}|${voice}|${instructions}|${speed}|${SAMPLING_ID}|${text}`)
     .digest('hex')
     .slice(0, 32);
 }
@@ -107,6 +120,8 @@ function ttsPayload({ voice, instructions, speed, text }) {
     format: 'mp3',
     mp3_bitrate: MP3_BITRATE,
     normalize: true,
+    temperature: TEMPERATURE,
+    top_p: TOP_P,
     latency: LATENCY,
     chunk_length: 200,
   };

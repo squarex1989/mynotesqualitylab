@@ -48,6 +48,8 @@ npm run dev
 | `FISH_MODEL` | `s2.1-pro-free` | 见下方「模型」 |
 | `FISH_MP3_BITRATE` | `128` | 64 / 128 / 192 |
 | `FISH_LATENCY` | `normal` | `normal` 质量优先，`balanced` 更快 |
+| `FISH_TEMPERATURE` | `0.2` | 0–1，越低同一个音色每句越一致（Fish 默认 0.7）。音频要给 ASR 听，音色漂了会被当成不同说话人，所以默认压低；改了会让已合成的音频全部重新合成 |
+| `FISH_TOP_P` | `0.5` | 0–1，同上（Fish 默认 0.7） |
 | `MAX_TTS_CHARS` | `800` | 单句字数上限，超过就在句号处切开 |
 | `PORT` | `3000` | |
 | `DATA_DIR` | `./data` | SQLite 和生成的 mp3 都在这里。部署时指向挂载磁盘 |
