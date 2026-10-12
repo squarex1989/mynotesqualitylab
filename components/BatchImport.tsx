@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { setHostToken } from '@/lib/identity';
 import type { ImportResult } from '@/lib/types';
@@ -58,7 +58,7 @@ export function BatchImport({ onImported }: { onImported: () => void }) {
   const [results, setResults] = useState<ImportResult[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const run = async (list: FileList) => {
+  const run = async (list: FileList | File[]) => {
     setError(null);
     setResults([]);
     const picked = Array.from(list);
@@ -117,11 +117,65 @@ export function BatchImport({ onImported }: { onImported: () => void }) {
     }
   };
 
+  // 拖拽上传：把文件拖到首页任何地方都行，松手就导入（和点按钮选文件走同一条路）。
+  // 监听挂在 window 上，所以不用正好拖到这张卡片里。dragenter/dragleave 在子元素之间
+  // 移动时会成对触发，用计数判断是不是真的拖出了窗口。
+  const [dragging, setDragging] = useState(false);
+  const busyRef = useRef(false);
+  busyRef.current = busy !== null;
+  const runRef = useRef(run);
+  runRef.current = run;
+  useEffect(() => {
+    let depth = 0;
+    const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+    const enter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth++;
+      setDragging(true);
+    };
+    const leave = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth = Math.max(0, depth - 1);
+      if (!depth) setDragging(false);
+    };
+    const over = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault(); // 不拦的话浏览器会直接打开文件
+      if (e.dataTransfer) e.dataTransfer.dropEffect = busyRef.current ? 'none' : 'copy';
+    };
+    const drop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth = 0;
+      setDragging(false);
+      const files = Array.from(e.dataTransfer?.files ?? []);
+      if (files.length && !busyRef.current) void runRef.current(files);
+    };
+    window.addEventListener('dragenter', enter);
+    window.addEventListener('dragleave', leave);
+    window.addEventListener('dragover', over);
+    window.addEventListener('drop', drop);
+    return () => {
+      window.removeEventListener('dragenter', enter);
+      window.removeEventListener('dragleave', leave);
+      window.removeEventListener('dragover', over);
+      window.removeEventListener('drop', drop);
+    };
+  }, []);
+
   const ok = results.filter((r) => r.ok).length;
   const failed = results.length - ok;
 
   return (
-    <div className="card">
+    <div className={`card drop-card${dragging ? ' dragging' : ''}`}>
+      {dragging && (
+        <div className="drop-overlay">
+          <div>
+            <strong>{busy ? 'Still importing the last batch…' : 'Drop transcript files to import'}</strong>
+            <span className="tiny muted">Up to {MAX_FILES} files — each becomes its own room</span>
+          </div>
+        </div>
+      )}
       <div className="spread" style={{ marginBottom: 4 }}>
         <h2>Import transcript files</h2>
         <button className="primary" disabled={busy !== null} onClick={() => fileRef.current?.click()}>
@@ -129,7 +183,7 @@ export function BatchImport({ onImported }: { onImported: () => void }) {
         </button>
       </div>
       <p className="sub" style={{ margin: 0 }}>
-        Pick up to {MAX_FILES} files — each becomes its own room. Name each file{' '}
+        Pick or drag & drop (anywhere on this page) up to {MAX_FILES} files — each becomes its own room. Name each file{' '}
         <strong>language + topic + speaker count + orderly / chaotic</strong>, e.g.{' '}
         <code>英文_产品评审_3人_有序.txt</code> or <code>EN-Weekly sync-4p-chaotic.txt</code>; the
         room is named and configured from that. <code>X.script.json</code> files are configured from
